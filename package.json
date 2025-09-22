@@ -1,0 +1,39 @@
+{
+  "name": "safebite-rest-api",
+  "version": "1.0.0",
+  "description": "SafeBite Food Safety Monitoring System - Node.js/Express Backend",
+  "main": "backend/app.js",
+  "scripts": {
+    "start": "node backend/app.js",
+    "dev": "nodemon --watch backend --watch public backend/app.js",
+    "test-server": "node test-server.js",
+    "test-all": "node test-all-endpoints.js",
+    "test-sensor": "node test-sensor-api.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "food-safety",
+    "iot",
+    "sensors",
+    "ai-analysis",
+    "express",
+    "nodejs"
+  ],
+  "author": "SafeBite Team",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
+    "axios": "^1.10.0",
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "mysql": "^2.18.1",
+    "mysql2": "^3.14.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
