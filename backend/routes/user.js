@@ -500,6 +500,45 @@ router.put('/profile', Auth.authenticateToken, async (req, res) => {
     }
 });
 
+// Alias route to support existing frontend path
+router.put('/update-profile', Auth.authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.user_id;
+        const { first_name, last_name, contact_number, tester_type_id } = req.body;
+
+        if (!first_name || !last_name) {
+            return res.status(400).json({ error: 'First name and last name are required' });
+        }
+
+        if (first_name.length < 2 || last_name.length < 2) {
+            return res.status(400).json({ error: 'First name and last name must be at least 2 characters' });
+        }
+
+        const updateQuery = "UPDATE users SET first_name = ?, last_name = ?, contact_number = ?, tester_type_id = ? WHERE user_id = ?";
+        await db.query(updateQuery, [first_name, last_name, contact_number || null, tester_type_id || null, userId]);
+
+        await Auth.logActivity(userId, 'User profile updated', db);
+
+        res.status(200).json({ success: true, message: 'Profile updated successfully' });
+    } catch (error) {
+        console.error('Update user profile (alias) error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Get list of tester types for dropdowns
+router.get('/tester-types', Auth.authenticateToken, async (req, res) => {
+    try {
+        const rows = await db.query(
+            'SELECT TesterTypeID AS id, TesterTypeName AS name FROM testertypes ORDER BY TesterTypeName'
+        );
+        res.status(200).json({ success: true, data: rows });
+    } catch (error) {
+        console.error('Get tester types error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 // Change password (authenticated user)
 router.put('/change-password', Auth.authenticateToken, async (req, res) => {
     try {

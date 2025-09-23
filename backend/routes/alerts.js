@@ -9,7 +9,8 @@ router.post('/', Auth.authenticateToken, async (req, res) => {
         food_id, 
         message, 
         alert_level = 'Low', 
-        alert_type = 'system', 
+        alert_type, 
+        ml_prediction_id,
         spoilage_probability, 
         recommended_action, 
         is_ml_generated = false, 
@@ -23,11 +24,55 @@ router.post('/', Auth.authenticateToken, async (req, res) => {
     }
 
     try {
-        const [result] = await db.query(
+        // Normalize alert type: default to ml_prediction if ml_prediction_id present, else system/scanner as given
+        let normalizedType = alert_type || (ml_prediction_id ? 'ml_prediction' : 'system');
+        if (String(normalizedType).toLowerCase() === 'scanner') normalizedType = 'sensor';
+        // Ensure normalizedType is one of allowed ENUMs
+        const allowed = new Set(['sensor','spoilage','ml_prediction','system']);
+        if (!allowed.has(String(normalizedType))) normalizedType = ml_prediction_id ? 'ml_prediction' : 'sensor';
+
+        // Attempt to auto-resolve missing food_id using alert_data or message
+        let foodIdFinal = food_id || null;
+        if (!foodIdFinal) {
+            try {
+                let foodName = null;
+                // Try alert_data first
+                const data = typeof alert_data === 'string' ? JSON.parse(alert_data) : (alert_data || {});
+                if (data && data.food_name) foodName = data.food_name;
+                // Fallback: parse from message like "SmartSense: Banana is UNSAFE"
+                if (!foodName && typeof message === 'string') {
+                    const m = message.match(/SmartSense:\s*(.+?)\s+is\s+/i) || message.match(/ML Prediction:\s*(.+?)\s+may\s+/i);
+                    if (m && m[1]) foodName = m[1].trim();
+                }
+                if (foodName) {
+                    const rows = await db.query(
+                        'SELECT food_id FROM food_items WHERE user_id = ? AND name = ? ORDER BY updated_at DESC, created_at DESC LIMIT 1',
+                        [user_id, foodName]
+                    );
+                    if (Array.isArray(rows) && rows.length > 0) {
+                        foodIdFinal = rows[0].food_id;
+                    }
+                }
+            } catch (_) {}
+        }
+
+        const result = await db.query(
             `INSERT INTO alerts 
-            (user_id, food_id, message, alert_level, alert_type, spoilage_probability, recommended_action, is_ml_generated, confidence_score, alert_data) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [user_id, food_id, message, alert_level, alert_type, spoilage_probability, recommended_action, is_ml_generated, confidence_score, alert_data]
+            (user_id, food_id, message, alert_level, alert_type, ml_prediction_id, spoilage_probability, recommended_action, is_ml_generated, confidence_score, alert_data)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                user_id,
+                foodIdFinal,
+                message,
+                alert_level || 'Low',
+                normalizedType,
+                ml_prediction_id || null,
+                spoilage_probability ?? null,
+                recommended_action || null,
+                is_ml_generated ? 1 : 0,
+                confidence_score ?? null,
+                alert_data || null
+            ]
         );
 
         // Log activity
@@ -47,6 +92,60 @@ router.post('/', Auth.authenticateToken, async (req, res) => {
     } catch (error) {
         console.error('Error creating alert:', error);
         res.status(500).json({ success: false, error: 'Database error during alert creation.' });
+    }
+});
+
+// POST /api/alerts/scanner - Create an alert from SmartSense Scanner (no auth fallback)
+router.post('/scanner', async (req, res) => {
+    try {
+        const {
+            user_id, // optional; defaults to Arduino user 11
+            food_id,
+            sensor_id,
+            message,
+            alert_level = 'Low',
+            alert_type = 'scanner',
+            spoilage_probability,
+            recommended_action,
+            is_ml_generated = false,
+            confidence_score,
+            alert_data
+        } = req.body || {};
+
+        if (!message) {
+            return res.status(400).json({ success: false, error: 'Alert message is required.' });
+        }
+
+        const uid = user_id || 11;
+
+        // Insert alert (columns present in DB; sensor_id allowed if exists, else NULL)
+        const sql = `INSERT INTO alerts 
+            (user_id, food_id, sensor_id, message, alert_level, alert_type, spoilage_probability, recommended_action, is_ml_generated, confidence_score, alert_data)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+        const params = [
+            uid,
+            food_id || null,
+            sensor_id || null,
+            message,
+            alert_level,
+            alert_type,
+            spoilage_probability ?? null,
+            recommended_action || null,
+            is_ml_generated ? 1 : 0,
+            confidence_score ?? null,
+            alert_data || null
+        ];
+
+        const result = await db.query(sql, params);
+
+        // Also log activity
+        try { await db.query('INSERT INTO activity_logs (user_id, action) VALUES (?, ?)', [uid, `Created ${alert_level} scanner alert: ${message}`]); } catch (_) {}
+
+        return res.json({ success: true, data: { alert_id: result.insertId } });
+    } catch (error) {
+        console.error('Error creating scanner alert:', error);
+        res.status(500).json({ success: false, error: 'Database error during scanner alert creation.' });
     }
 });
 
@@ -107,10 +206,12 @@ router.put('/:id/resolve', Auth.authenticateToken, async (req, res) => {
     const user_id = req.user.user_id;
 
     try {
-        const [result] = await db.query(
+        const result = await db.query(
             'UPDATE alerts SET is_resolved = 1, resolved_at = NOW(), resolved_by = ? WHERE alert_id = ? AND user_id = ?',
             [user_id, alert_id, user_id]
         );
+
+        console.log('Update result:', result);
 
         if (result.affectedRows === 0) {
             return res.status(404).json({ success: false, error: 'Alert not found or already resolved.' });
@@ -122,6 +223,12 @@ router.put('/:id/resolve', Auth.authenticateToken, async (req, res) => {
         res.json({ success: true, message: 'Alert resolved successfully' });
     } catch (error) {
         console.error('Error resolving alert:', error);
+        console.error('Error details:', {
+            alert_id: alert_id,
+            user_id: user_id,
+            error_message: error.message,
+            error_stack: error.stack
+        });
         res.status(500).json({ success: false, error: 'Database error resolving alert.' });
     }
 });

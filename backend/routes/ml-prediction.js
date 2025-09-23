@@ -450,11 +450,54 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
             console.warn('Failed to log activity:', logError.message);
         }
 
+        // Create alert for non-safe predictions to mirror SmartSense scanner structure
+        try {
+            const statusLower = String(prediction.spoilage_status || '').toLowerCase();
+            if (statusLower && statusLower !== 'safe' && statusLower !== 'fresh') {
+                const alertLevel = (statusLower === 'unsafe' || statusLower === 'spoiled') ? 'High' : 'Medium';
+                const recommendedAction = (statusLower === 'unsafe' || statusLower === 'spoiled')
+                    ? 'Discard immediately and sanitize storage area.'
+                    : 'Consume soon or improve storage conditions.';
+                const alertData = JSON.stringify({
+                    source: 'ml_prediction',
+                    condition: prediction.spoilage_status,
+                    sensor_readings: {
+                        temperature: tempValue,
+                        humidity: humidityValue,
+                        gas_level: gasValue
+                    },
+                    prediction_id: result.insertId,
+                    recommendations: prediction.recommendations,
+                    timestamp: new Date().toISOString()
+                });
+                await db.query(
+                    `INSERT INTO alerts (user_id, food_id, message, alert_level, alert_type, ml_prediction_id, spoilage_probability, recommended_action, is_ml_generated, confidence_score, alert_data)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        user_id,
+                        foodIdValue || null,
+                        `ML Prediction: ${food_name} may be ${prediction.spoilage_status} (${prediction.spoilage_probability}% probability)`,
+                        alertLevel,
+                        'ml_prediction',
+                        result.insertId,
+                        prediction.spoilage_probability,
+                        recommendedAction,
+                        1,
+                        prediction.confidence_score,
+                        alertData
+                    ]
+                );
+            }
+        } catch (alertErr) {
+            console.warn(`[${callId}] Could not create ML alert:`, alertErr.message);
+        }
+
         res.json({ 
             success: true,
             message: 'ML prediction completed successfully',
             prediction: {
                 prediction_id: result.insertId,
+                food_id: foodIdValue || null,
                 food_name,
                 food_category,
                 spoilage_status: prediction.spoilage_status,

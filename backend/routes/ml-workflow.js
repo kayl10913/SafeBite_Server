@@ -419,15 +419,29 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
             }
         }
 
-        // Create alert if spoilage detected
+        // Create alert if spoilage detected, include recommended_action and alert_data like SmartSense
         if (finalStatus !== 'safe') {
             try {
                 const alertLevel = finalStatus === 'unsafe' ? 'High' : 'Medium';
+                const recommendedAction = finalStatus === 'unsafe'
+                    ? 'Discard immediately and sanitize storage area.'
+                    : 'Consume soon or improve storage conditions.';
+                const alertData = JSON.stringify({
+                    source: 'ml_workflow',
+                    condition: finalStatus,
+                    sensor_readings: {
+                        temperature: finalTemperature,
+                        humidity: finalHumidity,
+                        gas_level: finalGasLevel
+                    },
+                    ai_thresholds: aiThresholds || null,
+                    prediction_id: result.insertId,
+                    timestamp: new Date().toISOString()
+                });
                 await db.query(
                     `INSERT INTO alerts 
-                    (user_id, food_id, message, alert_level, alert_type, 
-                     ml_prediction_id, spoilage_probability, confidence_score, is_ml_generated)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    (user_id, food_id, message, alert_level, alert_type, ml_prediction_id, spoilage_probability, recommended_action, is_ml_generated, confidence_score, alert_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         user_id,
                         food_id || null,
@@ -436,8 +450,10 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
                         'ml_prediction',
                         result.insertId,
                         finalProbability,
+                        recommendedAction,
+                        1,
                         finalConfidence,
-                        1
+                        alertData
                     ]
                 );
             } catch (alertError) {

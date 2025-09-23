@@ -969,6 +969,34 @@ router.put('/scan-session', async (req, res) => {
     }
 });
 
+// DELETE /api/sensor/scan-session - Cancel any active scan session
+router.delete('/scan-session', async (req, res) => {
+    try {
+        const { user_id, session_id } = req.body || {};
+        const userId = user_id || 11;
+
+        let where = 'user_id = ? AND status = "active"';
+        const params = [userId];
+        if (session_id) {
+            where = 'user_id = ? AND session_id = ? AND status = "active"';
+            params.push(session_id);
+        }
+
+        const sql = `UPDATE food_scan_sessions SET status = 'cancelled', completed_at = NOW() WHERE ${where}`;
+        const result = await db.query(sql, params);
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ success: false, error: 'No active scan session to cancel' });
+        }
+
+        console.log('🛑 Scan session(s) cancelled for user', userId, 'session_id:', session_id || 'ALL');
+        res.json({ success: true, cancelled: result.affectedRows });
+    } catch (error) {
+        console.error('Error cancelling scan session:', error);
+        res.status(500).json({ success: false, error: 'Failed to cancel scan session: ' + error.message });
+    }
+});
+
 // GET /api/sensor/scan-session-status - Check if scan session is active
 router.get('/scan-session-status', async (req, res) => {
     try {
@@ -995,6 +1023,24 @@ router.get('/scan-session-status', async (req, res) => {
         }
 
         const activeSession = activeSessions[0];
+
+        // Auto-expire sessions older than 10 minutes
+        const startedAt = new Date(activeSession.started_at).getTime();
+        const tenMinutes = 10 * 60 * 1000;
+        if (Date.now() - startedAt > tenMinutes) {
+            await db.query(
+                `UPDATE food_scan_sessions SET status = 'completed', completed_at = NOW() WHERE session_id = ? AND status = 'active'`,
+                [activeSession.session_id]
+            );
+            return res.json({
+                success: true,
+                active: false,
+                message: 'Previous scan session auto-completed due to timeout',
+                user_id: userId,
+                arduino_data_allowed: false
+            });
+        }
+
         return res.json({
             success: true,
             active: true,
@@ -1270,6 +1316,50 @@ router.get('/activity-data', auth.authenticateToken, async (req, res) => {
     } catch (error) {
         console.error('Error fetching activity data:', error);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// GET /api/sensor/activity-counts - Get per-user reading counts for Today / 7d / 30d
+router.get('/activity-counts', auth.authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.user_id;
+
+        // Count scan events by grouping readings into distinct minute buckets
+        // so one scan with 3 sensors (Temp/Humidity/Gas) counts as 1
+        const sql = `
+            SELECT 
+                COUNT(DISTINCT CASE 
+                    WHEN DATE(r.timestamp) = CURDATE() 
+                    THEN DATE_FORMAT(r.timestamp, '%Y-%m-%d %H:%i') END
+                ) AS scans_today,
+                COUNT(DISTINCT CASE 
+                    WHEN r.timestamp >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+                    THEN DATE_FORMAT(r.timestamp, '%Y-%m-%d %H:%i') END
+                ) AS scans_7d,
+                COUNT(DISTINCT CASE 
+                    WHEN r.timestamp >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                    THEN DATE_FORMAT(r.timestamp, '%Y-%m-%d %H:%i') END
+                ) AS scans_30d
+            FROM readings r
+            JOIN sensor s ON r.sensor_id = s.sensor_id
+            WHERE s.user_id = ?
+        `;
+
+        const rows = await db.query(sql, [userId]);
+        const row = rows && rows[0] ? rows[0] : {};
+
+        return res.json({
+            success: true,
+            counts: {
+                today: Number(row.scans_today || 0),
+                last7d: Number(row.scans_7d || 0),
+                last30d: Number(row.scans_30d || 0)
+            },
+            user_id: userId
+        });
+    } catch (error) {
+        console.error('Error fetching activity counts:', error);
+        res.status(500).json({ success: false, error: 'Failed to retrieve activity counts' });
     }
 });
 
