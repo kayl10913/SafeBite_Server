@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Sep 22, 2025 at 08:18 AM
+-- Generation Time: Sep 21, 2025 at 08:12 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
 
@@ -175,86 +175,7 @@ INSERT INTO `activity_logs` (`log_id`, `user_id`, `action`, `timestamp`) VALUES
 (134, 11, 'AI analysis performed for Tomato', '2025-09-21 04:47:35'),
 (135, 11, 'Updated expiry date for food item ID 1 to 2025-09-22', '2025-09-21 04:47:35'),
 (136, 11, 'Updated expiry date for food item ID 2 to 2025-09-22', '2025-09-21 04:47:35'),
-(137, 11, 'Updated expiry date for food item ID 3 to 2025-09-22', '2025-09-21 04:47:35'),
-(138, 11, 'User logged in successfully', '2025-09-21 07:25:09'),
-(139, 11, 'ML prediction performed for Tomato (unsafe)', '2025-09-21 07:55:00'),
-(140, 11, 'ML prediction performed for Tomato (unsafe)', '2025-09-21 07:55:01'),
-(141, 11, 'AI analysis performed for Tomato', '2025-09-21 07:55:37'),
-(142, 11, 'AI analysis performed for Tomato', '2025-09-21 07:55:39'),
-(143, 11, 'Updated expiry date for food item ID 1 to 2025-09-22', '2025-09-21 07:55:39'),
-(144, 11, 'Updated expiry date for food item ID 2 to 2025-09-22', '2025-09-21 07:55:39'),
-(145, 11, 'Updated expiry date for food item ID 3 to 2025-09-22', '2025-09-21 07:55:39'),
-(146, 11, 'AI analysis performed for Banana', '2025-09-21 08:02:36'),
-(147, 11, 'AI analysis performed for Banana', '2025-09-21 08:02:38'),
-(148, 11, 'Updated expiry date for food item ID 1 to 2025-09-22', '2025-09-21 08:02:38'),
-(149, 11, 'Updated expiry date for food item ID 2 to 2025-09-22', '2025-09-21 08:02:38'),
-(150, 11, 'Updated expiry date for food item ID 3 to 2025-09-22', '2025-09-21 08:02:38'),
-(151, 11, 'AI analysis performed for Banana', '2025-09-21 08:11:30'),
-(152, 11, 'AI analysis performed for Banana', '2025-09-21 08:11:32'),
-(153, 11, 'Updated expiry date for food item ID 1 to 2025-09-22', '2025-09-21 08:11:32'),
-(154, 11, 'Updated expiry date for food item ID 2 to 2025-09-22', '2025-09-21 08:11:32'),
-(155, 11, 'Updated expiry date for food item ID 3 to 2025-09-22', '2025-09-21 08:11:32'),
-(156, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:12:55'),
-(157, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:12:55'),
-(158, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:12:55'),
-(159, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:13:54'),
-(160, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:13:54'),
-(161, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:13:54'),
-(162, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:17:10'),
-(163, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:17:10'),
-(164, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:17:10'),
-(165, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:17:10'),
-(166, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:17:10'),
-(167, 11, 'AI analysis performed for Banana', '2025-09-21 08:21:36'),
-(168, 11, 'AI analysis performed for Banana', '2025-09-21 08:21:37'),
-(169, 11, 'Updated expiry date for food item ID 1 to 2025-09-22', '2025-09-21 08:21:37'),
-(170, 11, 'Updated expiry date for food item ID 2 to 2025-09-22', '2025-09-21 08:21:37'),
-(171, 11, 'Updated expiry date for food item ID 3 to 2025-09-22', '2025-09-21 08:21:37'),
-(172, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:21:55'),
-(173, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:21:55'),
-(174, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:21:58'),
-(175, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:21:58'),
-(176, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:25:55'),
-(177, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:25:55'),
-(178, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:27:53'),
-(179, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:27:53'),
-(180, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:27:53'),
-(181, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:30:16'),
-(182, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:30:16'),
-(183, 11, 'AI analysis performed for Apple', '2025-09-21 08:30:56'),
-(184, 11, 'AI analysis performed for Apple', '2025-09-21 08:30:57'),
-(185, 11, 'Updated expiry date for food item ID 4 to 2025-09-22', '2025-09-21 08:30:57'),
-(186, 11, 'Updated expiry date for food item ID 5 to 2025-09-22', '2025-09-21 08:30:57'),
-(187, 11, 'Updated expiry date for food item ID 6 to 2025-09-22', '2025-09-21 08:30:57'),
-(188, 11, 'ML prediction performed for Apple (unsafe)', '2025-09-21 08:46:26'),
-(189, 11, 'ML prediction performed for Apple (unsafe)', '2025-09-21 08:46:27'),
-(190, 11, 'ML prediction performed for Apple (unsafe)', '2025-09-21 08:50:27'),
-(191, 11, 'ML prediction performed for Apple (unsafe)', '2025-09-21 08:50:28'),
-(192, 11, 'ML prediction performed for Apple (unsafe)', '2025-09-21 08:53:09'),
-(193, 11, 'ML prediction performed for Apple (unsafe)', '2025-09-21 08:57:28'),
-(194, 11, 'ML prediction performed for Banana (unsafe)', '2025-09-21 08:58:49'),
-(195, 11, 'User logged in successfully', '2025-09-21 13:48:30'),
-(196, 11, 'AI analysis performed for Apple', '2025-09-21 15:36:57'),
-(197, 11, 'User logged in successfully', '2025-09-21 15:47:26'),
-(198, 11, 'User logged in successfully', '2025-09-21 23:12:07'),
-(199, 11, 'Added food item: mango', '2025-09-21 23:20:09'),
-(200, 11, 'AI analysis performed for Banana', '2025-09-22 01:05:12'),
-(201, 11, 'AI analysis performed for Banana', '2025-09-22 01:05:13'),
-(202, 11, 'Updated expiry date for food item ID 1 to 2025-09-23', '2025-09-22 01:05:13'),
-(203, 11, 'Updated expiry date for food item ID 2 to 2025-09-23', '2025-09-22 01:05:13'),
-(204, 11, 'Updated expiry date for food item ID 3 to 2025-09-23', '2025-09-22 01:05:13'),
-(205, 11, 'User logged in successfully', '2025-09-22 01:13:28'),
-(206, 11, 'AI analysis performed for Apple', '2025-09-22 02:41:39'),
-(207, 11, 'AI analysis performed for Apple', '2025-09-22 02:41:40'),
-(208, 11, 'Updated expiry date for food item ID 5 to 2025-09-22', '2025-09-22 02:41:41'),
-(209, 11, 'Updated expiry date for food item ID 6 to 2025-09-22', '2025-09-22 02:41:41'),
-(210, 11, 'Updated expiry date for food item ID 4 to 2025-09-22', '2025-09-22 02:41:41'),
-(211, 11, 'ML prediction performed for Apple (unsafe)', '2025-09-22 05:35:47'),
-(212, 11, 'AI analysis performed for Grape', '2025-09-22 05:40:25'),
-(213, 11, 'AI analysis performed for Grape', '2025-09-22 05:40:26'),
-(214, 11, 'Updated expiry date for food item ID 7 to 2025-09-23', '2025-09-22 05:40:26'),
-(215, 11, 'Updated expiry date for food item ID 8 to 2025-09-23', '2025-09-22 05:40:26'),
-(216, 11, 'Updated expiry date for food item ID 9 to 2025-09-23', '2025-09-22 05:40:26');
+(137, 11, 'Updated expiry date for food item ID 3 to 2025-09-22', '2025-09-21 04:47:35');
 
 -- --------------------------------------------------------
 
@@ -287,9 +208,7 @@ CREATE TABLE `alerts` (
 --
 
 INSERT INTO `alerts` (`alert_id`, `sensor_id`, `user_id`, `food_id`, `message`, `alert_level`, `alert_type`, `ml_prediction_id`, `spoilage_probability`, `recommended_action`, `is_ml_generated`, `confidence_score`, `alert_data`, `is_resolved`, `resolved_at`, `resolved_by`, `timestamp`) VALUES
-(1, NULL, 11, 3, 'ML Prediction: Banana may be unsafe (50% probability)', 'High', 'ml_prediction', 1, 50.00, NULL, 1, 70.00, NULL, 1, '2025-09-22 04:50:43', 11, '2025-09-22 01:05:12'),
-(2, NULL, 11, 4, 'ML Prediction: Apple may be unsafe (50% probability)', 'High', 'ml_prediction', 2, 50.00, NULL, 1, 85.00, NULL, 1, '2025-09-22 04:50:42', 11, '2025-09-22 02:41:39'),
-(3, NULL, 11, 7, 'ML Prediction: Grape may be unsafe (50% probability)', 'High', 'ml_prediction', 4, 50.00, NULL, 1, 70.00, NULL, 0, NULL, NULL, '2025-09-22 05:40:25');
+(1, NULL, 11, 1, 'ML Prediction: Tomato may be unsafe (50% probability)', 'High', 'ml_prediction', 1, 50.00, NULL, 1, 70.00, NULL, 0, NULL, NULL, '2025-09-21 04:47:34');
 
 -- --------------------------------------------------------
 
@@ -322,10 +241,7 @@ CREATE TABLE `feedbacks` (
 --
 
 INSERT INTO `feedbacks` (`feedback_id`, `user_id`, `feedback_type`, `priority`, `feedback_text`, `customer_name`, `customer_email`, `star_rating`, `sentiment`, `status`, `admin_notes`, `response_text`, `response_date`, `resolved_by`, `resolved_at`, `created_at`, `updated_at`) VALUES
-(1, 11, 'Performance Issue', 'High', 'slow and lags', 'Mark Laurence', 'marktiktok525@gmail.com', 5, 'Positive', 'Active', NULL, NULL, NULL, NULL, NULL, '2025-09-21 03:49:54', '2025-09-21 03:49:54'),
-(2, 11, 'Device Issue', 'Low', 'my device is not working\n', 'Mark Laurence', 'marktiktok525@gmail.com', 5, 'Positive', 'Active', NULL, NULL, NULL, NULL, NULL, '2025-09-21 23:58:24', '2025-09-21 23:58:24'),
-(3, 11, 'Device Issue', 'Low', 'slow ', 'Mark Laurence', 'marktiktok525@gmail.com', NULL, 'Negative', 'Active', NULL, NULL, NULL, NULL, NULL, '2025-09-22 00:16:07', '2025-09-22 00:16:07'),
-(4, 11, 'General Feedback', 'Low', 'slow and not acurate\n', 'Mark Laurence', 'marktiktok525@gmail.com', 3, 'Neutral', 'Active', NULL, NULL, NULL, NULL, NULL, '2025-09-22 00:22:57', '2025-09-22 00:22:57');
+(1, 11, 'Performance Issue', 'High', 'slow and lags', 'Mark Laurence', 'marktiktok525@gmail.com', 5, 'Positive', 'Active', NULL, NULL, NULL, NULL, NULL, '2025-09-21 03:49:54', '2025-09-21 03:49:54');
 
 -- --------------------------------------------------------
 
@@ -351,15 +267,9 @@ CREATE TABLE `food_items` (
 --
 
 INSERT INTO `food_items` (`food_id`, `name`, `category`, `expiration_date`, `sensor_id`, `user_id`, `scan_status`, `scan_timestamp`, `created_at`, `updated_at`) VALUES
-(1, 'Banana', 'Fruits', '2025-09-23', 13, 11, 'analyzed', '2025-09-22 01:05:10', '2025-09-22 01:05:10', '2025-09-22 01:05:13'),
-(2, 'Banana', 'Fruits', '2025-09-23', 14, 11, 'analyzed', '2025-09-22 01:05:10', '2025-09-22 01:05:10', '2025-09-22 01:05:13'),
-(3, 'Banana', 'Fruits', '2025-09-23', 15, 11, 'analyzed', '2025-09-21 17:05:12', '2025-09-22 01:05:10', '2025-09-22 01:05:13'),
-(4, 'Apple', 'Fruits', '2025-09-22', 13, 11, 'analyzed', '2025-09-21 18:41:39', '2025-09-22 02:41:36', '2025-09-22 02:41:39'),
-(5, 'Apple', 'Fruits', '2025-09-22', 14, 11, 'analyzed', '2025-09-22 02:41:36', '2025-09-22 02:41:36', '2025-09-22 02:41:41'),
-(6, 'Apple', 'Fruits', '2025-09-22', 15, 11, 'analyzed', '2025-09-22 02:41:36', '2025-09-22 02:41:36', '2025-09-22 05:35:47'),
-(7, 'Grape', 'Fruits', '2025-09-23', 13, 11, 'analyzed', '2025-09-21 21:40:25', '2025-09-22 05:40:22', '2025-09-22 05:40:26'),
-(8, 'Grape', 'Fruits', '2025-09-23', 14, 11, 'analyzed', '2025-09-22 05:40:22', '2025-09-22 05:40:22', '2025-09-22 05:40:26'),
-(9, 'Grape', 'Fruits', '2025-09-23', 15, 11, 'analyzed', '2025-09-22 05:40:22', '2025-09-22 05:40:22', '2025-09-22 05:40:26');
+(1, 'Tomato', 'Vegetables', '2025-09-22', 13, 11, 'analyzed', '2025-09-21 04:47:31', '2025-09-21 04:47:31', '2025-09-21 06:07:09'),
+(2, 'Tomato', 'Vegetables', '2025-09-22', 14, 11, 'analyzed', '2025-09-21 04:47:31', '2025-09-21 04:47:31', '2025-09-21 04:47:35'),
+(3, 'Tomato', 'Vegetables', '2025-09-22', 15, 11, 'analyzed', '2025-09-21 04:47:31', '2025-09-21 04:47:31', '2025-09-21 04:47:35');
 
 -- --------------------------------------------------------
 
@@ -378,21 +288,6 @@ CREATE TABLE `food_scan_sessions` (
   `completed_at` timestamp NULL DEFAULT NULL,
   `session_data` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'Session metadata' CHECK (json_valid(`session_data`))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
---
--- Dumping data for table `food_scan_sessions`
---
-
-INSERT INTO `food_scan_sessions` (`session_id`, `user_id`, `session_token`, `status`, `food_items_count`, `ml_predictions_count`, `started_at`, `completed_at`, `session_data`) VALUES
-(15, 11, 'scan_1758505828004_jq1qzm', 'completed', 0, 0, '2025-09-22 01:50:28', '2025-09-22 01:50:58', '{\"frontend_initiated\":true,\"timestamp\":\"2025-09-22T01:50:27.998Z\",\"source\":\"food_selection\"}'),
-(16, 11, 'scan_1758506579473_yux53i', 'completed', 0, 0, '2025-09-22 02:02:59', '2025-09-22 02:03:19', '{\"frontend_initiated\":true,\"timestamp\":\"2025-09-22T02:02:59.466Z\",\"source\":\"food_selection\"}'),
-(17, 11, 'scan_1758506880290_f72bq1', 'completed', 0, 0, '2025-09-22 02:08:00', '2025-09-22 02:08:33', '{\"frontend_initiated\":true,\"timestamp\":\"2025-09-22T02:08:00.284Z\",\"source\":\"food_selection\"}'),
-(18, 11, 'scan_1758507169559_yogdk9', 'completed', 0, 0, '2025-09-22 02:12:49', '2025-09-22 02:13:19', '{\"frontend_initiated\":true,\"timestamp\":\"2025-09-22T02:12:49.550Z\",\"source\":\"food_selection\"}'),
-(19, 11, 'scan_1758508887409_ls11er', 'completed', 0, 0, '2025-09-22 02:41:27', '2025-09-22 02:41:41', '{\"frontend_initiated\":true,\"timestamp\":\"2025-09-22T02:41:27.401Z\",\"source\":\"food_selection\"}'),
-(20, 11, 'scan_1758519323281_99huef', 'completed', 0, 0, '2025-09-22 05:35:23', '2025-09-22 05:35:23', '{\"frontend_initiated\":true,\"timestamp\":\"2025-09-22T05:35:23.263Z\"}'),
-(21, 11, 'scan_1758519323281_t2y04c', 'completed', 0, 0, '2025-09-22 05:35:23', '2025-09-22 05:35:23', '{\"frontend_initiated\":true,\"timestamp\":\"2025-09-22T05:35:23.267Z\"}'),
-(22, 11, 'scan_1758519323282_d2m7h9', 'completed', 0, 0, '2025-09-22 05:35:23', '2025-09-22 05:35:23', '{\"frontend_initiated\":true,\"timestamp\":\"2025-09-22T05:35:23.268Z\"}'),
-(26, 11, 'scan_1758519613606_qm608n', 'completed', 0, 0, '2025-09-22 05:40:13', '2025-09-22 05:40:26', '{\"frontend_initiated\":true,\"timestamp\":\"2025-09-22T05:40:13.600Z\",\"source\":\"food_selection\"}');
 
 -- --------------------------------------------------------
 
@@ -449,9 +344,7 @@ CREATE TABLE `ml_predictions` (
 --
 
 INSERT INTO `ml_predictions` (`prediction_id`, `user_id`, `food_id`, `food_name`, `food_category`, `temperature`, `humidity`, `gas_level`, `spoilage_probability`, `spoilage_status`, `confidence_score`, `model_version`, `prediction_data`, `recommendations`, `is_training_data`, `actual_outcome`, `feedback_score`, `created_at`) VALUES
-(1, 11, 3, 'Banana', 'Fruits', 26.80, 90.30, 56.00, 50.00, 'unsafe', 70.00, '1.0', '{\"ai_analysis\":true,\"timestamp\":\"2025-09-22T01:05:12.473Z\",\"model_type\":\"smart_training_db\",\"source_details\":{\"centroids\":{\"unsafe\":{\"t\":26.8,\"h\":90.3,\"g\":56,\"n\":1}}}}', '[\"Transfer to a cooler environment (ideally below 15°C)\",\"Monitor gas levels closely\",\"Consider consuming sooner rather than later\"]', 1, NULL, NULL, '2025-09-22 01:05:12'),
-(2, 11, 4, 'Apple', 'Fruits', 28.40, 86.80, 61.00, 50.00, 'unsafe', 85.00, '1.0', '{\"ai_analysis\":true,\"timestamp\":\"2025-09-22T02:41:39.593Z\",\"model_type\":\"smart_training_db\",\"source_details\":{\"centroids\":{\"unsafe\":{\"t\":27.6,\"h\":88.55,\"g\":58.5,\"n\":2}}}}', '[\"Refrigerate immediately\",\"Monitor gas levels closely\",\"Discard if signs of spoilage appear (e.g., bruising, soft spots)\"]', 1, NULL, NULL, '2025-09-22 02:41:39'),
-(4, 11, 7, 'Grape', 'Fruits', 28.40, 87.00, 61.00, 50.00, 'unsafe', 70.00, '1.0', '{\"ai_analysis\":true,\"timestamp\":\"2025-09-22T05:40:25.296Z\",\"model_type\":\"smart_training_db\",\"source_details\":{\"centroids\":{\"unsafe\":{\"t\":27.866666666666664,\"h\":88.03333333333335,\"g\":59.333333333333336,\"n\":3}}}}', '[\"Refrigerate immediately\",\"Monitor gas levels closely\",\"Inspect for mold or discoloration\"]', 1, NULL, NULL, '2025-09-22 05:40:25');
+(1, 11, 1, 'Tomato', 'Vegetables', 30.20, 83.00, 57.00, 50.00, 'unsafe', 70.00, '1.0', '{\"ai_analysis\":true,\"timestamp\":\"2025-09-21T04:47:34.296Z\",\"model_type\":\"smart_training_db\",\"source_details\":{\"centroids\":{\"unsafe\":{\"t\":30.2,\"h\":83,\"g\":57,\"n\":1}}}}', '[\"Refrigerate immediately\",\"Monitor gas levels closely\",\"Inspect for mold or discoloration\"]', 1, NULL, NULL, '2025-09-21 04:47:34');
 
 -- --------------------------------------------------------
 
@@ -480,9 +373,7 @@ CREATE TABLE `ml_training_data` (
 --
 
 INSERT INTO `ml_training_data` (`training_id`, `food_name`, `food_category`, `temperature`, `humidity`, `gas_level`, `actual_spoilage_status`, `storage_duration_hours`, `environmental_factors`, `data_source`, `quality_score`, `created_at`, `updated_at`) VALUES
-(1, 'Banana', 'Fruits', 26.80, 90.30, 56.00, 'unsafe', NULL, '{\"ai_analysis\":true,\"confidence\":\"70\",\"storage_conditions\":{\"temperature\":26.799999237060547,\"humidity\":90.30000305175781,\"gas_level\":56,\"timestamp\":\"2025-09-22T01:05:12.439Z\"},\"timestamp\":\"2025-09-22T01:05:12.447Z\"}', 'expert', 0.95, '2025-09-22 01:05:12', '2025-09-22 01:05:12'),
-(2, 'Apple', 'Fruits', 28.40, 86.80, 61.00, 'unsafe', NULL, '{\"ai_analysis\":true,\"confidence\":\"85\",\"storage_conditions\":{\"temperature\":28.399999618530273,\"humidity\":86.80000305175781,\"gas_level\":61,\"timestamp\":\"2025-09-22T02:41:39.555Z\"},\"timestamp\":\"2025-09-22T02:41:39.561Z\"}', 'expert', 0.95, '2025-09-22 02:41:39', '2025-09-22 02:41:39'),
-(3, 'Grape', 'Fruits', 28.40, 87.00, 61.00, 'unsafe', NULL, '{\"ai_analysis\":true,\"confidence\":\"65\",\"storage_conditions\":{\"temperature\":28.399999618530273,\"humidity\":87,\"gas_level\":61,\"timestamp\":\"2025-09-22T05:40:25.269Z\"},\"timestamp\":\"2025-09-22T05:40:25.275Z\"}', 'expert', 0.95, '2025-09-22 05:40:25', '2025-09-22 05:40:25');
+(1, 'Tomato', 'Vegetables', 30.20, 83.00, 57.00, 'unsafe', NULL, '{\"ai_analysis\":true,\"confidence\":\"65\",\"storage_conditions\":{\"temperature\":30.200000762939453,\"humidity\":83,\"gas_level\":57,\"timestamp\":\"2025-09-21T04:47:34.275Z\"},\"timestamp\":\"2025-09-21T04:47:34.280Z\"}', 'expert', 0.95, '2025-09-21 04:47:34', '2025-09-21 04:47:34');
 
 -- --------------------------------------------------------
 
@@ -503,18 +394,9 @@ CREATE TABLE `readings` (
 --
 
 INSERT INTO `readings` (`reading_id`, `sensor_id`, `value`, `unit`, `timestamp`) VALUES
-(1, 13, 26.8, '°C', '2025-09-22 01:05:09'),
-(2, 14, 90.3, '%', '2025-09-22 01:05:09'),
-(3, 15, 56, 'ppm', '2025-09-22 01:05:09'),
-(7, 13, 28.4, '°C', '2025-09-22 02:41:35'),
-(8, 14, 86.8, '%', '2025-09-22 02:41:35'),
-(9, 15, 61, 'ppm', '2025-09-22 02:41:35'),
-(10, 13, 28.5, '°C', '2025-09-22 05:35:42'),
-(11, 14, 90.7, '%', '2025-09-22 05:35:42'),
-(12, 15, 64, 'ppm', '2025-09-22 05:35:42'),
-(13, 13, 28.4, '°C', '2025-09-22 05:40:21'),
-(14, 14, 87, '%', '2025-09-22 05:40:21'),
-(15, 15, 61, 'ppm', '2025-09-22 05:40:21');
+(1, 13, 30.2, '°C', '2025-09-21 04:47:30'),
+(2, 14, 83, '%', '2025-09-21 04:47:30'),
+(3, 15, 57, 'ppm', '2025-09-21 04:47:30');
 
 -- --------------------------------------------------------
 
@@ -607,12 +489,7 @@ INSERT INTO `sessions` (`session_id`, `user_id`, `session_token`, `expires_at`, 
 (42, 11, 'a59cbb60daeb588ba006a86f9f8a701fd42543f408ab4542ced8d880f8fa416c', '2025-09-27 01:45:21', '2025-09-20 09:45:21'),
 (43, 11, '1d96d188f71de0ef3f2b21c63861fbc310a98595a6d170dc9308617b55d408a7', '2025-09-27 09:48:04', '2025-09-20 17:48:04'),
 (44, 11, '7a5da5f65e6f0b0cfaa38ec61aac6d7035e25153ba85cf5338fa0004cc345d16', '2025-09-27 18:38:31', '2025-09-21 02:38:31'),
-(45, 11, '7f7e131e032c33c0bb2a5f68640d69f47b86ca265b5b09f84f4794de6222d3d8', '2025-09-27 20:41:44', '2025-09-21 04:41:44'),
-(46, 11, '0880a8cbd0524b4f6b3aa68735dd9df69ee0c5b6b3805c7832e43a8dc8dc124f', '2025-09-27 23:25:09', '2025-09-21 07:25:09'),
-(47, 11, '5bf049097d1a3fdc5e62d0eb50c576e2881855da83739c8c838bd936798b403f', '2025-09-28 05:48:30', '2025-09-21 13:48:30'),
-(48, 11, 'e49d8c85501d0700e99c891e5a44919b7687cbdd99ab5a064715f28e4ce3af23', '2025-09-28 07:47:26', '2025-09-21 15:47:26'),
-(49, 11, 'b563ed2f00d3e13723aa878099fef19b57d2beb35b0d8021c2574efbf6ab1e07', '2025-09-28 15:12:07', '2025-09-21 23:12:07'),
-(50, 11, '2ad47175149ace66bc30b869af81c5a7916327b335c11a50b88c1b2b1cf68752', '2025-09-28 17:13:28', '2025-09-22 01:13:28');
+(45, 11, '7f7e131e032c33c0bb2a5f68640d69f47b86ca265b5b09f84f4794de6222d3d8', '2025-09-27 20:41:44', '2025-09-21 04:41:44');
 
 -- --------------------------------------------------------
 
@@ -794,31 +671,31 @@ ALTER TABLE `users`
 -- AUTO_INCREMENT for table `activity_logs`
 --
 ALTER TABLE `activity_logs`
-  MODIFY `log_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=217;
+  MODIFY `log_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=138;
 
 --
 -- AUTO_INCREMENT for table `alerts`
 --
 ALTER TABLE `alerts`
-  MODIFY `alert_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `alert_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT for table `feedbacks`
 --
 ALTER TABLE `feedbacks`
-  MODIFY `feedback_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
+  MODIFY `feedback_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT for table `food_items`
 --
 ALTER TABLE `food_items`
-  MODIFY `food_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=10;
+  MODIFY `food_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
 --
 -- AUTO_INCREMENT for table `food_scan_sessions`
 --
 ALTER TABLE `food_scan_sessions`
-  MODIFY `session_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=27;
+  MODIFY `session_id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `ml_models`
@@ -830,19 +707,19 @@ ALTER TABLE `ml_models`
 -- AUTO_INCREMENT for table `ml_predictions`
 --
 ALTER TABLE `ml_predictions`
-  MODIFY `prediction_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
+  MODIFY `prediction_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT for table `ml_training_data`
 --
 ALTER TABLE `ml_training_data`
-  MODIFY `training_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `training_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT for table `readings`
 --
 ALTER TABLE `readings`
-  MODIFY `reading_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=16;
+  MODIFY `reading_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
 --
 -- AUTO_INCREMENT for table `sensor`
@@ -854,7 +731,7 @@ ALTER TABLE `sensor`
 -- AUTO_INCREMENT for table `sessions`
 --
 ALTER TABLE `sessions`
-  MODIFY `session_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=51;
+  MODIFY `session_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=46;
 
 --
 -- AUTO_INCREMENT for table `testertypes`
