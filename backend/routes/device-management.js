@@ -352,4 +352,92 @@ router.get('/devices/next-id', async (req, res) => {
     }
 });
 
+// Bulk add 3 sensors (Temperature, Humidity, Gas) for one account
+router.post('/devices/bulk', async (req, res) => {
+    try {
+        const { user_ref, sensors } = req.body || {};
+        if (!user_ref) {
+            return res.status(400).json({ success: false, message: 'user_ref is required' });
+        }
+        if (!Array.isArray(sensors) || sensors.length !== 3) {
+            return res.status(400).json({ success: false, message: 'Provide exactly 3 sensors (Temperature, Humidity, Gas)' });
+        }
+
+        // Use a single connection for resolution + transaction
+        const connection = await db.getConnection();
+
+        // Resolve user_id from account (id/username/email/fullname)
+        let userIdToUse = null;
+        const tryId = Number(user_ref);
+        if (!Number.isNaN(tryId)) {
+            userIdToUse = tryId;
+        } else {
+            const ref = String(user_ref).trim();
+            let [rows] = await connection.execute(`SELECT user_id FROM users WHERE username = ? LIMIT 1`, [ref]);
+            if (!rows || !rows[0]) [rows] = await connection.execute(`SELECT user_id FROM users WHERE email = ? LIMIT 1`, [ref]);
+            if (!rows || !rows[0]) [rows] = await connection.execute(`SELECT user_id FROM users WHERE LOWER(CONCAT(first_name,' ',last_name)) = LOWER(?) LIMIT 1`, [ref]);
+            if (rows && rows[0] && rows[0].user_id) userIdToUse = rows[0].user_id;
+        }
+        if (!userIdToUse) return res.status(404).json({ success: false, message: 'Account not found' });
+
+        // Validate types set
+        const expected = new Set(['Temperature','Humidity','Gas']);
+        const provided = new Set(sensors.map(s => (s.type || '').trim()));
+        for (const t of expected) if (!provided.has(t)) return res.status(400).json({ success:false, message:`Missing sensor type ${t}` });
+
+        // Begin transaction for atomicity
+        await connection.beginTransaction();
+
+        // Check duplicates for this user inside transaction snapshot
+        const [dupRows] = await connection.execute(
+            `SELECT type FROM sensor WHERE user_id = ? AND type IN ('Temperature','Humidity','Gas')`,
+            [userIdToUse]
+        );
+        if (dupRows && dupRows.length) {
+            await connection.rollback();
+            return res.status(409).json({ success:false, message:`User already has: ${dupRows.map(r=>r.type).join(', ')}` });
+        }
+
+        // Check custom_id uniqueness if provided
+        for (const s of sensors) {
+            if (s.custom_id) {
+                const [r] = await connection.execute(`SELECT COUNT(*) AS c FROM sensor WHERE sensor_id = ?`, [s.custom_id]);
+                if (r && r[0] && r[0].c > 0) {
+                    await connection.rollback();
+                    return res.status(409).json({ success:false, message:`Sensor ID already exists: ${s.custom_id}` });
+                }
+            }
+        }
+
+        // Insert all three; if any fails, rollback
+        const inserted = [];
+        for (const s of sensors) {
+            const active = typeof s.is_active === 'number' ? s.is_active : 1;
+            if (s.custom_id) {
+                const [result] = await connection.execute(
+                    `INSERT INTO sensor (sensor_id, type, user_id, is_active) VALUES (?, ?, ?, ?)`,
+                    [Number(s.custom_id), s.type, userIdToUse, active]
+                );
+                inserted.push(result.insertId || Number(s.custom_id));
+            } else {
+                const [result] = await connection.execute(
+                    `INSERT INTO sensor (type, user_id, is_active) VALUES (?, ?, ?)`,
+                    [s.type, userIdToUse, active]
+                );
+                inserted.push(result.insertId);
+            }
+        }
+
+        await connection.commit();
+        res.json({ success:true, message:'Sensors added successfully', inserted_ids: inserted });
+    } catch (error) {
+        try {
+            const connection = await db.getConnection();
+            await connection.rollback();
+        } catch (_) {}
+        console.error('Error in devices/bulk:', error);
+        res.status(500).json({ success:false, message:'Error adding sensors', error: error.message });
+    }
+});
+
 module.exports = router;

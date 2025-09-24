@@ -113,6 +113,8 @@ app.use('/api/sensor-analytics', sensorAnalyticsRoutes);
 app.use('/api/feedbacks', feedbacksRoutes);
 app.use('/api/ml', mlRoutes);
 app.use('/api/ml', mlTrainingRoutes);
+// Alias to match frontend calls like /api/ml-training/...
+app.use('/api/ml-training', mlTrainingRoutes);
 app.use('/api/ml', mlPredictionRoutes);
 app.use('/api/ai', aiTrainingRoutes);
 app.use('/api/ai', aiFoodAnalysisRoutes);

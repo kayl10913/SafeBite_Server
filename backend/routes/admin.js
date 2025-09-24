@@ -98,10 +98,229 @@ router.post('/logout', Auth.authenticateToken, Auth.requireAdmin, async (req, re
     }
 });
 
+// Device activity aggregated across all 'User' role accounts (for admin charts)
+router.get('/sensor/activity-data', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
+    try {
+        const filter = (req.query.filter || 'monthly').toLowerCase();
+        if (filter === 'yearly') {
+            // Count total readings per year - TEMPORARY: Return 29 for 2025
+            const rows = await db.query(`
+                SELECT YEAR(r.timestamp) AS y, FLOOR(COUNT(*) / 3) AS c
+                FROM readings r
+                JOIN sensor s ON r.sensor_id = s.sensor_id
+                JOIN users u ON s.user_id = u.user_id
+                WHERE u.role = 'User' AND r.value IS NOT NULL
+                GROUP BY YEAR(r.timestamp)
+                ORDER BY y ASC
+            `);
+            
+            // Use actual database data - no overrides
+            // Return the last 6 years (or fewer) ascending
+            const years = new Array(6).fill(0);
+            const last = rows.slice(-6);
+            last.forEach((r, idx) => { years[6 - last.length + idx] = Number(r.c) || 0; });
+            return res.json({ success: true, data: { years } });
+        } else {
+            // Monthly for current year - Count device usage cycles (3 sensors = 1 device)
+            const rows = await db.query(`
+                SELECT MONTH(r.timestamp) AS m, FLOOR(COUNT(*) / 3) AS c
+                FROM readings r
+                JOIN sensor s ON r.sensor_id = s.sensor_id
+                JOIN users u ON s.user_id = u.user_id
+                WHERE u.role = 'User' AND r.value IS NOT NULL AND YEAR(r.timestamp) = YEAR(CURDATE())
+                GROUP BY MONTH(r.timestamp)
+                ORDER BY m ASC
+            `);
+            
+            // Use actual database data - no overrides
+            const months = new Array(12).fill(0);
+            rows.forEach(r => { const i = (Number(r.m) || 0) - 1; if (i>=0 && i<12) months[i] = Number(r.c) || 0; });
+            return res.json({ success: true, data: { months } });
+        }
+    } catch (error) {
+        console.error('Admin sensor/activity-data error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+});
+
+router.get('/sensor/activity-counts', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
+    try {
+        console.log('=== ACTIVITY COUNTS ENDPOINT CALLED ===');
+        // Get the most recent reading date to calculate relative dates
+        console.log('Executing recent date query...');
+        const recentDateQuery = await db.query(`
+            SELECT MAX(r.timestamp) as max_timestamp
+            FROM readings r
+            JOIN sensor s ON r.sensor_id = s.sensor_id
+            JOIN users u ON s.user_id = u.user_id
+            WHERE u.role = 'User' AND r.value IS NOT NULL
+        `);
+        console.log('Recent date query result:', recentDateQuery);
+        
+        const maxTimestamp = recentDateQuery[0]?.max_timestamp;
+        if (!maxTimestamp) {
+            return res.json({ success: true, counts: { today: 0, last7d: 0, last30d: 0 } });
+        }
+        
+        console.log('Executing main counts query with maxTimestamp:', maxTimestamp);
+        const rows = await db.query(`
+            SELECT
+              COUNT(DISTINCT CASE WHEN DATE(r.timestamp) = DATE(?) THEN CONCAT(s.user_id, '_', r.timestamp) END) AS today,
+              COUNT(DISTINCT CASE WHEN r.timestamp >= DATE_SUB(?, INTERVAL 7 DAY) THEN CONCAT(s.user_id, '_', r.timestamp) END) AS last7d,
+              COUNT(DISTINCT CASE WHEN r.timestamp >= DATE_SUB(?, INTERVAL 30 DAY) THEN CONCAT(s.user_id, '_', r.timestamp) END) AS last30d
+            FROM readings r
+            JOIN sensor s ON r.sensor_id = s.sensor_id
+            JOIN users u ON s.user_id = u.user_id
+            WHERE u.role = 'User' AND r.value IS NOT NULL
+        `, [maxTimestamp, maxTimestamp, maxTimestamp]);
+        console.log('Main counts query result:', rows);
+        const c = rows && rows[0] ? rows[0] : { today: 0, last7d: 0, last30d: 0 };
+        const counts = { 
+            today: Number(c.today)||0, 
+            last7d: Number(c.last7d)||0, 
+            last30d: Number(c.last30d)||0 
+        };
+        console.log('=== ADMIN ACTIVITY COUNTS DEBUG ===');
+        console.log('Max timestamp from DB:', maxTimestamp);
+        console.log('Admin activity counts query result:', c);
+        console.log('Admin activity counts processed:', counts);
+        console.log('Current date:', new Date().toISOString().split('T')[0]);
+        console.log('=== END DEBUG ===');
+        res.json({ success: true, counts });
+    } catch (error) {
+        console.error('Admin sensor/activity-counts error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+});
+
+// Test endpoint to verify server is working
+router.get('/test', (req, res) => {
+    res.json({ 
+        success: true, 
+        message: 'Admin API is working', 
+        timestamp: new Date().toISOString() 
+    });
+});
+
+// Get admin profile (authenticated admin)
+router.get('/profile', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
+    try {
+        const userId = req.user.user_id;
+        
+        const profileQuery = "SELECT user_id, first_name, last_name, username, email, contact_number, role, account_status, created_at FROM users WHERE user_id = ? AND role = 'Admin'";
+        const users = await db.query(profileQuery, [userId]);
+        
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'Admin profile not found' });
+        }
+        
+        const admin = users[0];
+        res.json({ success: true, admin });
+    } catch (error) {
+        console.error('Get admin profile error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Update admin profile (authenticated admin)
+router.put('/update-profile', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
+    try {
+        const userId = req.user.user_id;
+        const { email, username, first_name, last_name, contact_number, password } = req.body;
+        
+        // Validate required fields
+        if (!email || !first_name || !last_name) {
+            return res.status(400).json({ error: 'Email, first name, and last name are required' });
+        }
+        
+        // Validate email format
+        if (!Auth.validateEmail(email)) {
+            return res.status(400).json({ error: 'Invalid email format' });
+        }
+        
+        // Check if email is already taken by another user
+        const emailCheckQuery = "SELECT user_id FROM users WHERE email = ? AND user_id != ?";
+        const existingUsers = await db.query(emailCheckQuery, [email, userId]);
+        
+        if (existingUsers.length > 0) {
+            return res.status(400).json({ error: 'Email is already taken' });
+        }
+        
+        let updateQuery = "UPDATE users SET email = ?, first_name = ?, last_name = ?, contact_number = ?";
+        let updateParams = [email, first_name, last_name, contact_number];
+
+        // Optional username update when provided
+        if (typeof username === 'string' && username.trim() !== '') {
+            // Ensure username is unique (if your schema uses unique index)
+            const unameCheck = await db.query("SELECT user_id FROM users WHERE username = ? AND user_id != ?", [username, userId]);
+            if (unameCheck.length > 0) {
+                return res.status(400).json({ error: 'Username is already taken' });
+            }
+            updateQuery = "UPDATE users SET email = ?, username = ?, first_name = ?, last_name = ?, contact_number = ?";
+            updateParams = [email, username, first_name, last_name, contact_number];
+        }
+        
+        // Update password if provided
+        if (password && password.trim() !== '') {
+            if (password.length < 6) {
+                return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+            }
+            const hashedPassword = await Auth.hashPassword(password);
+            updateQuery += ", password_hash = ?";
+            updateParams.push(hashedPassword);
+        }
+        
+        updateQuery += " WHERE user_id = ? AND role = 'Admin'";
+        updateParams.push(userId);
+        
+        await db.query(updateQuery, updateParams);
+        
+        // Log activity
+        await Auth.logActivity(userId, 'Admin profile updated', db);
+        
+        res.json({ success: true, message: 'Profile updated successfully' });
+    } catch (error) {
+        console.error('Update admin profile error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Get recent general feedback reviews
+router.get('/recent-reviews', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
+    try {
+        const { limit = 5 } = req.query;
+        
+        const reviews = await db.query(`
+            SELECT 
+                feedback_id,
+                customer_name,
+                feedback_text,
+                star_rating,
+                sentiment,
+                created_at
+            FROM feedbacks 
+            WHERE feedback_type = 'General Feedback' 
+            ORDER BY created_at DESC 
+            LIMIT ?
+        `, [parseInt(limit)]);
+        
+        res.json({
+            success: true,
+            reviews: reviews || []
+        });
+    } catch (error) {
+        console.error('Error fetching recent reviews:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+});
+
 // Get all users (admin only)
 router.get('/users', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
     try {
         const { page = 1, limit = 20, search = '', status = '' } = req.query;
+        // Support date filters by created_at. Accept both snake_case and aliases.
+        const startDate = (req.query.start_date || req.query.date_start || '').trim();
+        const endDate = (req.query.end_date || req.query.date_end || '').trim();
         const offset = (page - 1) * limit;
 
         // Only show application Users (exclude Admin accounts) for the Admin Users page
@@ -118,6 +337,16 @@ router.get('/users', Auth.authenticateToken, Auth.requireAdmin, async (req, res)
         if (status) {
             whereClause += " AND account_status = ?";
             params.push(status);
+        }
+
+        // Optional created_at date range filter (inclusive)
+        if (startDate) {
+            whereClause += " AND DATE(created_at) >= ?";
+            params.push(startDate);
+        }
+        if (endDate) {
+            whereClause += " AND DATE(created_at) <= ?";
+            params.push(endDate);
         }
 
         const usersQuery = `
@@ -537,28 +766,31 @@ router.get('/statistics', Auth.authenticateToken, Auth.requireAdmin, async (req,
             
             const allUsersStats = await db.query(allUsersStatsQuery);
             
-            // Get total spoilage alerts
-            const totalAlertsQuery = `
-                SELECT COUNT(*) as total_spoilage_alerts
-                FROM alerts a
-                JOIN users u ON a.user_id = u.user_id
-                WHERE u.role = 'User'
-            `;
-            const totalAlerts = await db.query(totalAlertsQuery);
+            // Get device count (devices with sensor activity) - 1 user = 1 device (max 3 sensors)
+        const deviceCountQuery = `
+            SELECT COUNT(DISTINCT s.user_id) as total_active_devices
+            FROM sensor s
+            JOIN readings r ON s.sensor_id = r.sensor_id
+            JOIN users u ON s.user_id = u.user_id
+            WHERE u.role = 'User' AND r.value IS NOT NULL
+        `;
+        const deviceCount = await db.query(deviceCountQuery);
             
-            // Get device reports count (sensor readings entries)
+            // Get device reports count from feedbacks (Device Issue + Active status)
             const deviceReportsQuery = `
                 SELECT COUNT(*) as total_device_reports
-                FROM readings
+                FROM feedbacks
+                WHERE feedback_type = 'Device Issue' AND status = 'Active'
             `;
             const deviceReports = await db.query(deviceReportsQuery);
+            console.log('Device reports (Device Issue + Active):', deviceReports[0]?.total_device_reports || 0);
             
             return res.status(200).json({
                 success: true,
                 dashboard_stats: {
                     active_users: allUsersStats[0]?.total_active_users || 0,
                     device_reports: deviceReports[0]?.total_device_reports || 0,
-                    spoilage_alerts: totalAlerts[0]?.total_spoilage_alerts || 0
+                    spoilage_alerts: deviceCount[0]?.total_active_devices || 0
                 },
                 logged_in_user: userStats[0] || null
             });
@@ -699,44 +931,39 @@ router.get('/reports/top-spoiling-foods', Auth.authenticateToken, Auth.requireAd
         console.log('start_date:', start_date);
         console.log('end_date:', end_date);
         
-        let whereClause = "WHERE u.role = 'User'";
+        // Build date filter over ml_predictions.created_at and only unsafe predictions
+        let whereClause = "WHERE mp.spoilage_status = 'unsafe'";
         let params = [];
 
-        // Filter by date range if provided
+        // Filter by date range if provided (created_at in ml_predictions)
         if (start_date && start_date.trim() !== '' && end_date && end_date.trim() !== '') {
-            // Custom date range
-            whereClause += " AND DATE(a.timestamp) BETWEEN ? AND ?";
+            whereClause += " AND DATE(mp.created_at) BETWEEN ? AND ?";
             params.push(start_date, end_date);
         } else if (start_date && start_date.trim() !== '') {
-            // Single date (for daily)
-            whereClause += " AND DATE(a.timestamp) = ?";
+            whereClause += " AND DATE(mp.created_at) = ?";
             params.push(start_date);
         }
 
-        // Get total count first
+        // Get total count first (distinct foods spoiled)
         const countQuery = `
-            SELECT COUNT(DISTINCT fi.food_id) as total 
-            FROM food_items fi
-            JOIN sensor s ON fi.sensor_id = s.sensor_id
-            JOIN users u ON s.user_id = u.user_id
-            LEFT JOIN alerts a ON fi.sensor_id = a.sensor_id
-            ${whereClause}
+            SELECT COUNT(DISTINCT mp.food_name) as total
+            FROM ml_predictions mp
+            JOIN users u ON mp.user_id = u.user_id
+            ${whereClause} AND u.role = 'User'
         `;
         const countResult = await db.query(countQuery, params);
         const totalCount = countResult[0].total;
 
-        // Get paginated data using the exact query structure
+        // Get paginated data grouped by food name/category from ml_predictions
         const query = `
             SELECT 
-                fi.name AS \`Food Item\`,
-                COUNT(a.alert_id) AS \`Spoilage Reports\`,
-                COALESCE(MAX(a.alert_level), 'None') AS \`Risk Level\`
-            FROM food_items fi
-            JOIN sensor s ON fi.sensor_id = s.sensor_id
-            JOIN users u ON s.user_id = u.user_id
-            LEFT JOIN alerts a ON fi.sensor_id = a.sensor_id
-            ${whereClause}
-            GROUP BY fi.food_id, fi.name
+                mp.food_name AS \`Food Item\`,
+                COUNT(*) AS \`Spoilage Reports\`,
+                'Spoiled' AS \`Risk Level\`
+            FROM ml_predictions mp
+            JOIN users u ON mp.user_id = u.user_id
+            ${whereClause} AND u.role = 'User'
+            GROUP BY mp.food_name
             ORDER BY \`Spoilage Reports\` DESC
             LIMIT ? OFFSET ?
         `;

@@ -3,6 +3,71 @@ const router = express.Router();
 const Auth = require('../config/auth');
 const db = require('../config/database');
 
+// Add ML training data (alias to match frontend: /api/ml-training/add)
+router.post('/add', Auth.authenticateToken, async (req, res) => {
+    try {
+        const body = req.body || {};
+        // Accept both camelCase (frontend) and snake_case (backend/DB) keys
+        const food_name = body.food_name ?? body.foodName;
+        const food_category = body.food_category ?? body.category ?? null;
+        const temperature = body.temperature;
+        const humidity = body.humidity;
+        const gas_level = (body.gas_level != null ? body.gas_level : (body.ph != null ? body.ph : null));
+        const actual_status = body.actual_status ?? body.actualStatus;
+        const data_source = body.data_source ?? body.source;
+        let quality_score = body.quality_score ?? body.dataQuality;
+
+        // Basic validation
+        if (!food_name || temperature == null || humidity == null || gas_level == null || !actual_status) {
+            return res.status(400).json({ success: false, message: 'food_name, temperature, humidity, gas_level, actual_status are required' });
+        }
+
+        const allowedStatuses = new Set(['safe','caution','unsafe']);
+        if (!allowedStatuses.has(String(actual_status).toLowerCase())) {
+            return res.status(400).json({ success: false, message: "actual_status must be one of: 'safe','caution','unsafe'" });
+        }
+
+        const allowedSources = new Set(['manual','sensor','user_feedback','expert']);
+        const sourceToUse = allowedSources.has(String(data_source || '').toLowerCase()) ? String(data_source).toLowerCase() : 'sensor';
+
+        // Normalize inputs
+        const statusToUse = String(actual_status).toLowerCase();
+        // If frontend sends percent (0-100), convert to 0-1
+        if (quality_score != null && !Number.isNaN(Number(quality_score))) {
+            const qn = Number(quality_score);
+            quality_score = qn > 1 ? qn / 100 : qn;
+        }
+        const qualityToUse = (quality_score == null || Number.isNaN(Number(quality_score))) ? 1.0 : Math.max(0, Math.min(1, Number(quality_score)));
+
+        const sql = `
+            INSERT INTO ml_training_data
+            (food_name, food_category, temperature, humidity, gas_level, actual_spoilage_status, data_source, quality_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+        const params = [
+            String(food_name).trim(),
+            food_category ? String(food_category).trim() : null,
+            Number(temperature),
+            Number(humidity),
+            Number(gas_level),
+            statusToUse,
+            sourceToUse,
+            qualityToUse
+        ];
+
+        const result = await db.query(sql, params);
+
+        return res.status(201).json({
+            success: true,
+            message: 'Training data added',
+            id: result.insertId
+        });
+    } catch (error) {
+        console.error('Error adding ML training data:', error);
+        return res.status(500).json({ success: false, message: 'Failed to add training data' });
+    }
+});
+
 // GET /api/ml/check - Check if ML data already exists for a food
 router.get('/check', Auth.authenticateToken, async (req, res) => {
     try {

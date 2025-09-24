@@ -7,26 +7,26 @@ const Auth = require('../config/auth');
 // Get summary statistics for sensor analytics dashboard
 router.get('/summary', Auth.authenticateToken, async (req, res) => {
     try {
-        // Get summary statistics
+        // Get summary statistics - only for users with role 'User' (grouped by device/user)
         const summaryQuery = `
             SELECT
-                (SELECT COUNT(*) FROM sensor) AS totalSensors,
-                (SELECT COUNT(DISTINCT user_id) FROM sensor WHERE is_active = 1) AS activeTesters,
-                (SELECT COUNT(*) FROM alerts WHERE alert_level IN ('Medium', 'High')) AS spoilageAlerts,
-                (SELECT COUNT(DISTINCT user_id) FROM users WHERE role = 'User' AND user_id NOT IN (SELECT DISTINCT user_id FROM sensor)) AS inactiveUsers
+                (SELECT COUNT(DISTINCT u.user_id) FROM users u WHERE u.role = 'User' AND EXISTS (SELECT 1 FROM sensor s WHERE s.user_id = u.user_id)) AS totalSensors,
+                (SELECT COUNT(DISTINCT u.user_id) FROM users u WHERE u.role = 'User' AND EXISTS (SELECT 1 FROM sensor s WHERE s.user_id = u.user_id AND s.is_active = 1)) AS activeTesters,
+                (SELECT COUNT(*) FROM alerts a JOIN sensor s ON a.sensor_id = s.sensor_id JOIN users u ON s.user_id = u.user_id WHERE a.alert_level IN ('Medium', 'High') AND u.role = 'User') AS spoilageAlerts,
+                (SELECT COUNT(DISTINCT u.user_id) FROM users u WHERE u.role = 'User' AND u.user_id NOT IN (SELECT DISTINCT s.user_id FROM sensor s JOIN users u2 ON s.user_id = u2.user_id WHERE u2.role = 'User')) AS inactiveUsers
         `;
         
         const summaryResult = await db.query(summaryQuery);
         const summary = summaryResult[0];
         
-        // Get sensor type breakdown using the specific query
+        // Get sensor type breakdown using the specific query - show devices that have each sensor type
         const sensorTypeQuery = `
             SELECT 
                 s.type AS sensorType,
                 COUNT(DISTINCT u.user_id) AS activeUsers,
                 ROUND(
                     COUNT(DISTINCT u.user_id) / 
-                    (SELECT COUNT(*) FROM users WHERE role = 'User') * 100, 1
+                    (SELECT COUNT(DISTINCT u2.user_id) FROM users u2 WHERE u2.role = 'User' AND EXISTS (SELECT 1 FROM sensor s2 WHERE s2.user_id = u2.user_id)) * 100, 1
                 ) AS activePercentage
             FROM sensor s
             JOIN users u ON s.user_id = u.user_id
@@ -82,7 +82,7 @@ router.get('/summary', Auth.authenticateToken, async (req, res) => {
 // Get detailed sensor data with filtering
 router.get('/detailed', Auth.authenticateToken, async (req, res) => {
     try {
-        const { nameSearch, dateRange, startDate, endDate, testerType, sensorType, foodType, status } = req.query;
+        const { nameSearch, dateRange, startDate, endDate, testerType, sensorType, status } = req.query;
         
         let whereConditions = [];
         let queryParams = [];
@@ -116,7 +116,10 @@ router.get('/detailed', Auth.authenticateToken, async (req, res) => {
                         dateCondition = `DATE(r.timestamp) = CURDATE()`;
                         break;
                     case 'weekly':
-                        dateCondition = `r.timestamp >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)`;
+                        dateCondition = `(
+                            r.timestamp >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
+                            AND r.timestamp < DATE_ADD(DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY), INTERVAL 7 DAY)
+                        )`;
                         break;
                     case 'monthly':
                         dateCondition = `r.timestamp >= DATE_SUB(CURDATE(), INTERVAL DAY(CURDATE())-1 DAY)`;
@@ -141,47 +144,59 @@ router.get('/detailed', Auth.authenticateToken, async (req, res) => {
             queryParams.push(sensorType);
         }
         
-        if (foodType && foodType !== 'all') {
-            whereConditions.push(`EXISTS (SELECT 1 FROM ml_predictions mp WHERE mp.user_id = u.user_id AND mp.food_name = ?)`);
-            queryParams.push(foodType);
-        }
+        // Removed unused foodType filter
         
         if (status && status !== 'all') {
             if (status === 'Active') {
-                whereConditions.push(`s.is_active = 1`);
+                whereConditions.push(`EXISTS (SELECT 1 FROM sensor s3 WHERE s3.user_id = u.user_id AND s3.is_active = 1) AND NOT EXISTS (SELECT 1 FROM sensor s4 WHERE s4.user_id = u.user_id AND s4.is_active = 0)`);
             } else if (status === 'Inactive') {
-                whereConditions.push(`s.is_active = 0`);
-            } else if (status === 'Spoilage Alert') {
-                whereConditions.push(`EXISTS (SELECT 1 FROM alerts a WHERE a.sensor_id = s.sensor_id AND a.alert_level IN ('Medium', 'High'))`);
+                whereConditions.push(`EXISTS (SELECT 1 FROM sensor s5 WHERE s5.user_id = u.user_id) AND NOT EXISTS (SELECT 1 FROM sensor s6 WHERE s6.user_id = u.user_id AND s6.is_active = 1)`);
+            } else if (status === 'No Device') {
+                whereConditions.push(`NOT EXISTS (SELECT 1 FROM sensor s7 WHERE s7.user_id = u.user_id)`);
             }
         }
         
         const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
         
+        const alertDateCondition = (dateRange === 'daily') ? ` AND DATE(a.timestamp) = CURDATE()` : '';
+
         const detailedQuery = `
             SELECT 
                 CONCAT(u.first_name, ' ', u.last_name) as foodTester,
                 COALESCE(t.TesterTypeName, u.role) as type,
                 CASE 
-                    WHEN EXISTS (SELECT 1 FROM alerts a WHERE a.sensor_id = s.sensor_id AND a.alert_level IN ('Medium', 'High')) THEN 'Spoilage Alert'
-                    WHEN s.is_active = 1 THEN 'Active'
-                    ELSE 'Inactive'
+                    WHEN EXISTS (SELECT 1 FROM sensor s3 WHERE s3.user_id = u.user_id AND s3.is_active = 1) AND NOT EXISTS (SELECT 1 FROM sensor s4 WHERE s4.user_id = u.user_id AND s4.is_active = 0) THEN 'Active'
+                    WHEN EXISTS (SELECT 1 FROM sensor s5 WHERE s5.user_id = u.user_id) THEN 'Inactive'
+                    ELSE 'No Device'
                 END as status,
-                r.timestamp as lastPing,
-                CONCAT(r.value, ' ', r.unit) as lastReading,
-                (SELECT COUNT(*) FROM alerts a WHERE a.sensor_id = s.sensor_id AND DATE(a.timestamp) = CURDATE()) as alertsToday,
-                u.created_at as registeredDate
-            FROM sensor s
-            JOIN users u ON s.user_id = u.user_id
+                MAX(r.timestamp) as lastPing,
+                CONCAT(
+                    COALESCE((SELECT CONCAT(r_temp.value, ' ', r_temp.unit) FROM readings r_temp JOIN sensor s_temp ON r_temp.sensor_id = s_temp.sensor_id WHERE s_temp.user_id = u.user_id AND s_temp.type = 'Temperature' ORDER BY r_temp.timestamp DESC LIMIT 1), 'N/A'), ' | ',
+                    COALESCE((SELECT CONCAT(r_hum.value, ' ', r_hum.unit) FROM readings r_hum JOIN sensor s_hum ON r_hum.sensor_id = s_hum.sensor_id WHERE s_hum.user_id = u.user_id AND s_hum.type = 'Humidity' ORDER BY r_hum.timestamp DESC LIMIT 1), 'N/A'), ' | ',
+                    COALESCE((SELECT CONCAT(r_gas.value, ' ', r_gas.unit) FROM readings r_gas JOIN sensor s_gas ON r_gas.sensor_id = s_gas.sensor_id WHERE s_gas.user_id = u.user_id AND s_gas.type = 'Gas' ORDER BY r_gas.timestamp DESC LIMIT 1), 'N/A')
+                ) as lastReading,
+                (SELECT COUNT(*) FROM alerts a WHERE a.user_id = u.user_id${alertDateCondition}) as alertsToday,
+                u.created_at as registeredDate,
+                COUNT(DISTINCT s.sensor_id) as sensorCount,
+                CONCAT_WS(' | ',
+                    CASE WHEN EXISTS (SELECT 1 FROM sensor sg WHERE sg.user_id = u.user_id AND sg.type = 'Gas')
+                         THEN CONCAT('gas ', CASE WHEN EXISTS (SELECT 1 FROM sensor sga WHERE sga.user_id = u.user_id AND sga.type = 'Gas' AND sga.is_active = 1) THEN 'active' ELSE 'inactive' END)
+                    END,
+                    CASE WHEN EXISTS (SELECT 1 FROM sensor st WHERE st.user_id = u.user_id AND st.type = 'Temperature')
+                         THEN CONCAT('temp ', CASE WHEN EXISTS (SELECT 1 FROM sensor sta WHERE sta.user_id = u.user_id AND sta.type = 'Temperature' AND sta.is_active = 1) THEN 'active' ELSE 'inactive' END)
+                    END,
+                    CASE WHEN EXISTS (SELECT 1 FROM sensor sh WHERE sh.user_id = u.user_id AND sh.type = 'Humidity')
+                         THEN CONCAT('hum ', CASE WHEN EXISTS (SELECT 1 FROM sensor sha WHERE sha.user_id = u.user_id AND sha.type = 'Humidity' AND sha.is_active = 1) THEN 'active' ELSE 'inactive' END)
+                    END
+                ) AS sensorStatuses
+            FROM users u
             LEFT JOIN testertypes t ON u.tester_type_id = t.TesterTypeID
+            LEFT JOIN sensor s ON u.user_id = s.user_id
             LEFT JOIN readings r ON s.sensor_id = r.sensor_id
-            LEFT JOIN (
-                SELECT sensor_id, MAX(timestamp) as max_timestamp
-                FROM readings
-                GROUP BY sensor_id
-            ) latest ON r.sensor_id = latest.sensor_id AND r.timestamp = latest.max_timestamp
-            ${whereClause}
-            ORDER BY r.timestamp DESC
+            WHERE u.role = 'User'
+            ${whereClause ? 'AND ' + whereClause.replace('WHERE ', '') : ''}
+            GROUP BY u.user_id, u.first_name, u.last_name, t.TesterTypeName, u.role, u.created_at
+            ORDER BY MAX(r.timestamp) DESC
         `;
         
         const detailedData = await db.query(detailedQuery, queryParams);
@@ -213,30 +228,44 @@ router.get('/search', Auth.authenticateToken, async (req, res) => {
             });
         }
         
+        const alertDateConditionSearch = ` AND DATE(a.timestamp) = CURDATE()`; // only applied when UI uses daily search in future
+
         const searchQuery = `
             SELECT 
                 CONCAT(u.first_name, ' ', u.last_name) as foodTester,
                 COALESCE(t.TesterTypeName, u.role) as type,
                 CASE 
-                    WHEN EXISTS (SELECT 1 FROM alerts a WHERE a.sensor_id = s.sensor_id AND a.alert_level IN ('Medium', 'High')) THEN 'Spoilage Alert'
-                    WHEN s.is_active = 1 THEN 'Active'
-                    ELSE 'Inactive'
+                    WHEN EXISTS (SELECT 1 FROM sensor s3 WHERE s3.user_id = u.user_id AND s3.is_active = 1) AND NOT EXISTS (SELECT 1 FROM sensor s4 WHERE s4.user_id = u.user_id AND s4.is_active = 0) THEN 'Active'
+                    WHEN EXISTS (SELECT 1 FROM sensor s5 WHERE s5.user_id = u.user_id) THEN 'Inactive'
+                    ELSE 'No Device'
                 END as status,
-                r.timestamp as lastPing,
-                CONCAT(r.value, ' ', r.unit) as lastReading,
-                (SELECT COUNT(*) FROM alerts a WHERE a.sensor_id = s.sensor_id AND DATE(a.timestamp) = CURDATE()) as alertsToday,
-                u.created_at as registeredDate
-            FROM sensor s
-            JOIN users u ON s.user_id = u.user_id
+                MAX(r.timestamp) as lastPing,
+                CONCAT(
+                    COALESCE((SELECT CONCAT(r_temp.value, ' ', r_temp.unit) FROM readings r_temp JOIN sensor s_temp ON r_temp.sensor_id = s_temp.sensor_id WHERE s_temp.user_id = u.user_id AND s_temp.type = 'Temperature' ORDER BY r_temp.timestamp DESC LIMIT 1), 'N/A'), ' | ',
+                    COALESCE((SELECT CONCAT(r_hum.value, ' ', r_hum.unit) FROM readings r_hum JOIN sensor s_hum ON r_hum.sensor_id = s_hum.sensor_id WHERE s_hum.user_id = u.user_id AND s_hum.type = 'Humidity' ORDER BY r_hum.timestamp DESC LIMIT 1), 'N/A'), ' | ',
+                    COALESCE((SELECT CONCAT(r_gas.value, ' ', r_gas.unit) FROM readings r_gas JOIN sensor s_gas ON r_gas.sensor_id = s_gas.sensor_id WHERE s_gas.user_id = u.user_id AND s_gas.type = 'Gas' ORDER BY r_gas.timestamp DESC LIMIT 1), 'N/A')
+                ) as lastReading,
+                (SELECT COUNT(*) FROM alerts a WHERE a.user_id = u.user_id) as alertsToday,
+                u.created_at as registeredDate,
+                COUNT(DISTINCT s.sensor_id) as sensorCount,
+                CONCAT_WS(' | ',
+                    CASE WHEN EXISTS (SELECT 1 FROM sensor sg WHERE sg.user_id = u.user_id AND sg.type = 'Gas')
+                         THEN CONCAT('gas ', CASE WHEN EXISTS (SELECT 1 FROM sensor sga WHERE sga.user_id = u.user_id AND sga.type = 'Gas' AND sga.is_active = 1) THEN 'active' ELSE 'inactive' END)
+                    END,
+                    CASE WHEN EXISTS (SELECT 1 FROM sensor st WHERE st.user_id = u.user_id AND st.type = 'Temperature')
+                         THEN CONCAT('temp ', CASE WHEN EXISTS (SELECT 1 FROM sensor sta WHERE sta.user_id = u.user_id AND sta.type = 'Temperature' AND sta.is_active = 1) THEN 'active' ELSE 'inactive' END)
+                    END,
+                    CASE WHEN EXISTS (SELECT 1 FROM sensor sh WHERE sh.user_id = u.user_id AND sh.type = 'Humidity')
+                         THEN CONCAT('hum ', CASE WHEN EXISTS (SELECT 1 FROM sensor sha WHERE sha.user_id = u.user_id AND sha.type = 'Humidity' AND sha.is_active = 1) THEN 'active' ELSE 'inactive' END)
+                    END
+                ) AS sensorStatuses
+            FROM users u
             LEFT JOIN testertypes t ON u.tester_type_id = t.TesterTypeID
+            LEFT JOIN sensor s ON u.user_id = s.user_id
             LEFT JOIN readings r ON s.sensor_id = r.sensor_id
-            LEFT JOIN (
-                SELECT sensor_id, MAX(timestamp) as max_timestamp
-                FROM readings
-                GROUP BY sensor_id
-            ) latest ON r.sensor_id = latest.sensor_id AND r.timestamp = latest.max_timestamp
-            WHERE (u.first_name LIKE ? OR u.username LIKE ? OR u.last_name LIKE ?)
-            ORDER BY r.timestamp DESC
+            WHERE u.role = 'User' AND (u.first_name LIKE ? OR u.username LIKE ? OR u.last_name LIKE ?)
+            GROUP BY u.user_id, u.first_name, u.last_name, t.TesterTypeName, u.role, u.created_at
+            ORDER BY MAX(r.timestamp) DESC
         `;
         
         const searchTerm = `%${name.trim()}%`;
@@ -267,12 +296,13 @@ router.get('/filter-options', Auth.authenticateToken, async (req, res) => {
             ORDER BY TesterTypeName
         `;
         
-        // Get unique sensor types from sensor table
+        // Get unique sensor types from sensor table - only for users with role 'User'
         const sensorTypesQuery = `
-            SELECT DISTINCT type as value, type as label
-            FROM sensor
-            WHERE type IS NOT NULL AND type != ''
-            ORDER BY type
+            SELECT DISTINCT s.type as value, s.type as label
+            FROM sensor s
+            JOIN users u ON s.user_id = u.user_id
+            WHERE s.type IS NOT NULL AND s.type != '' AND u.role = 'User'
+            ORDER BY s.type
         `;
         
         const [testerTypes, sensorTypes] = await Promise.all([
@@ -333,6 +363,93 @@ router.get('/stats', Auth.authenticateToken, async (req, res) => {
             success: false, 
             error: 'Internal server error' 
         });
+    }
+});
+
+// GET /api/sensor-analytics/device-usage-by-user
+// Return per-user device usage and ML status counts (only users with a complete 3-sensor device)
+router.get('/device-usage-by-user', Auth.authenticateToken, async (req, res) => {
+    try {
+        const { dateRange, startDate, endDate, limit } = req.query;
+
+        // Prepare date filter on ml_predictions.created_at based on dateRange
+        let dateWhere = '';
+        let dateParams = [];
+        if (dateRange) {
+            switch ((dateRange || '').toLowerCase()) {
+                case 'daily':
+                    dateWhere = ' AND DATE(mp.created_at) = CURDATE()';
+                    break;
+                case 'weekly':
+                    if (startDate && endDate) {
+                        dateWhere = ' AND mp.created_at >= ? AND mp.created_at <= ?';
+                        dateParams.push(startDate);
+                        dateParams.push(endDate + ' 23:59:59');
+                    } else {
+                        dateWhere = ' AND (mp.created_at >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY) AND mp.created_at < DATE_ADD(DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY), INTERVAL 7 DAY))';
+                    }
+                    break;
+                case 'monthly':
+                    dateWhere = ' AND mp.created_at >= DATE_SUB(CURDATE(), INTERVAL DAY(CURDATE())-1 DAY)';
+                    break;
+                case 'yearly':
+                    dateWhere = ' AND mp.created_at >= DATE_SUB(CURDATE(), INTERVAL DAYOFYEAR(CURDATE())-1 DAY)';
+                    break;
+                case 'custom':
+                    if (startDate && endDate) {
+                        dateWhere = ' AND mp.created_at >= ? AND mp.created_at <= ?';
+                        dateParams.push(startDate);
+                        dateParams.push(endDate + ' 23:59:59');
+                    }
+                    break;
+                default:
+                    // all time
+                    break;
+            }
+        }
+
+        // Aggregate per user in a single query: only users with complete 3-sensor device
+        const aggregateQuery = `
+            SELECT 
+                u.user_id,
+                CONCAT(u.first_name, ' ', u.last_name) AS user_name,
+                SUM(CASE WHEN mp.spoilage_status = 'safe' THEN 1 ELSE 0 END) AS safe_count,
+                SUM(CASE WHEN mp.spoilage_status = 'caution' THEN 1 ELSE 0 END) AS caution_count,
+                SUM(CASE WHEN mp.spoilage_status = 'unsafe' THEN 1 ELSE 0 END) AS unsafe_count,
+                COUNT(mp.prediction_id) AS total_count,
+                MAX(mp.created_at) AS last_used
+            FROM users u
+            LEFT JOIN ml_predictions mp
+              ON mp.user_id = u.user_id
+              ${dateWhere}
+            WHERE u.role = 'User'
+              AND EXISTS (SELECT 1 FROM sensor s WHERE s.user_id = u.user_id AND s.type = 'Temperature')
+              AND EXISTS (SELECT 1 FROM sensor s WHERE s.user_id = u.user_id AND s.type = 'Humidity')
+              AND EXISTS (SELECT 1 FROM sensor s WHERE s.user_id = u.user_id AND s.type = 'Gas')
+            GROUP BY u.user_id, u.first_name, u.last_name
+            HAVING total_count > 0
+            ORDER BY total_count DESC, last_used DESC
+            ${limit ? 'LIMIT ?' : ''}
+        `;
+
+        const params = [...dateParams];
+        if (limit) params.push(parseInt(limit));
+        const rows = await db.query(aggregateQuery, params);
+
+        const data = rows.map(r => ({
+            device: '3-in-1 Device',
+            user: r.user_name,
+            used: Number(r.total_count) || 0,
+            safe: Number(r.safe_count) || 0,
+            at_risk: Number(r.caution_count) || 0,
+            spoiled: Number(r.unsafe_count) || 0,
+            last_used: r.last_used
+        }));
+
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error('Error in device-usage-by-user:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
     }
 });
 
