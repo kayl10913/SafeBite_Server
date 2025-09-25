@@ -380,6 +380,174 @@ router.get('/users', Auth.authenticateToken, Auth.requireAdmin, async (req, res)
     }
 });
 
+// Create user (admin only)
+router.post('/users', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
+    try {
+        const adminId = req.user.user_id;
+        const {
+            first_name,
+            last_name,
+            email,
+            tester_type_id,
+            account_status = 'active',
+            password,
+            contact_number,
+            username
+        } = req.body || {};
+
+        // Validate required fields
+        if (!first_name || !last_name || !email) {
+            return res.status(400).json({ success: false, error: 'First name, last name, and email are required' });
+        }
+        if (!Auth.validateEmail(email)) {
+            return res.status(400).json({ success: false, error: 'Invalid email format' });
+        }
+        if (!password || password.length < 6) {
+            return res.status(400).json({ success: false, error: 'Password must be at least 6 characters long' });
+        }
+
+        // Ensure email unique
+        const emailCheck = await db.query('SELECT user_id FROM users WHERE email = ?', [email]);
+        if (emailCheck.length > 0) {
+            return res.status(400).json({ success: false, error: 'Email already exists' });
+        }
+
+        // Username: auto-generate from first/last when not provided; ensure uniqueness
+        async function generateUniqueUsername(base) {
+            const sanitized = String(base || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+            let candidate = sanitized || `user${Date.now().toString().slice(-6)}`;
+            let idx = 0;
+            // Try up to 50 variants before timestamp fallback
+            while (idx < 50) {
+                const rows = await db.query('SELECT user_id FROM users WHERE username = ? LIMIT 1', [candidate]);
+                if (!rows || rows.length === 0) return candidate;
+                idx += 1;
+                candidate = `${sanitized}${idx}`;
+            }
+            return `${sanitized}${Date.now().toString().slice(-4)}`;
+        }
+
+        let usernameToUse = (typeof username === 'string' && username.trim() !== '')
+            ? username.trim()
+            : await generateUniqueUsername(`${first_name}${last_name}`);
+
+        const hashedPassword = await Auth.hashPassword(password);
+        const statusNorm = ['active','inactive','suspended'].includes(String(account_status).toLowerCase()) ? String(account_status).toLowerCase() : 'active';
+
+        const insertSql = `
+            INSERT INTO users (first_name, last_name, username, email, contact_number, role, account_status, password_hash, tester_type_id)
+            VALUES (?, ?, ?, ?, ?, 'User', ?, ?, ?)
+        `;
+        const params = [
+            String(first_name).trim(),
+            String(last_name).trim(),
+            usernameToUse,
+            String(email).trim(),
+            contact_number ? String(contact_number).trim() : null,
+            statusNorm,
+            hashedPassword,
+            tester_type_id ? parseInt(tester_type_id) : null
+        ];
+        const result = await db.query(insertSql, params);
+
+        // Log admin activity in DB style
+        try {
+            await Auth.logActivity(adminId, `Added: User (${String(first_name).trim()} ${String(last_name).trim()})`, db);
+        } catch (_) {}
+
+        res.status(201).json({
+            success: true,
+            message: 'User created successfully',
+            user_id: result.insertId
+        });
+    } catch (error) {
+        console.error('Create user error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+});
+
+// Update user (admin only)
+router.put('/users/:userId', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const {
+            first_name,
+            last_name,
+            email,
+            tester_type_id,
+            account_status,
+            password,
+            contact_number,
+            username
+        } = req.body || {};
+
+        // Validate existence
+        const rows = await db.query("SELECT user_id, role FROM users WHERE user_id = ?", [userId]);
+        if (!rows || rows.length === 0) {
+            return res.status(404).json({ success: false, error: 'User not found' });
+        }
+        if (rows[0].role !== 'User') {
+            return res.status(400).json({ success: false, error: 'Only standard users can be edited here' });
+        }
+
+        // Collect updates dynamically
+        const sets = [];
+        const params = [];
+
+        if (typeof first_name === 'string' && first_name.trim() !== '') { sets.push('first_name = ?'); params.push(first_name.trim()); }
+        if (typeof last_name === 'string' && last_name.trim() !== '') { sets.push('last_name = ?'); params.push(last_name.trim()); }
+        if (typeof contact_number === 'string') { sets.push('contact_number = ?'); params.push(contact_number.trim()); }
+        if (typeof tester_type_id !== 'undefined') { sets.push('tester_type_id = ?'); params.push(tester_type_id ? parseInt(tester_type_id) : null); }
+        if (typeof account_status === 'string' && ['active','inactive','suspended'].includes(account_status.toLowerCase())) { sets.push('account_status = ?'); params.push(account_status.toLowerCase()); }
+
+        // Username uniqueness if provided
+        if (typeof username === 'string' && username.trim() !== '') {
+            const chk = await db.query('SELECT user_id FROM users WHERE username = ? AND user_id != ?', [username.trim(), userId]);
+            if (chk.length > 0) return res.status(400).json({ success: false, error: 'Username already exists' });
+            sets.push('username = ?'); params.push(username.trim());
+        }
+
+        // Email validation if provided
+        if (typeof email === 'string' && email.trim() !== '') {
+            if (!Auth.validateEmail(email)) {
+                return res.status(400).json({ success: false, error: 'Invalid email format' });
+            }
+            const eChk = await db.query('SELECT user_id FROM users WHERE email = ? AND user_id != ?', [email.trim(), userId]);
+            if (eChk.length > 0) return res.status(400).json({ success: false, error: 'Email already exists' });
+            sets.push('email = ?'); params.push(email.trim());
+        }
+
+        // Password if provided
+        if (typeof password === 'string' && password.trim() !== '') {
+            if (password.length < 6) {
+                return res.status(400).json({ success: false, error: 'Password must be at least 6 characters long' });
+            }
+            const hashed = await Auth.hashPassword(password);
+            sets.push('password_hash = ?'); params.push(hashed);
+        }
+
+        if (sets.length === 0) {
+            return res.status(400).json({ success: false, error: 'No valid fields to update' });
+        }
+
+        const sql = `UPDATE users SET ${sets.join(', ')} WHERE user_id = ?`;
+        params.push(userId);
+        await db.query(sql, params);
+
+        // Log activity
+        try {
+            const u = await db.query('SELECT username FROM users WHERE user_id = ?', [userId]);
+            const uname = u && u[0] ? u[0].username : `id:${userId}`;
+            await Auth.logActivity(req.user.user_id, `Updated: User (${uname})`, db);
+        } catch (_) {}
+
+        res.json({ success: true, message: 'User updated successfully' });
+    } catch (error) {
+        console.error('Update user error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+});
+
 // Get user details (admin only)
 router.get('/users/:userId', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
     try {
@@ -392,8 +560,7 @@ router.get('/users/:userId', Auth.authenticateToken, Auth.requireAdmin, async (r
             return res.status(404).json({ error: 'User not found' });
         }
         
-        // Log admin viewing user details
-        await Auth.logActivity(req.user.user_id, `Admin viewed user ${userId} details`, db);
+        // Do not log viewing user details per requirement
         
         res.status(200).json({ success: true, user: users[0] });
     } catch (error) {
@@ -415,14 +582,40 @@ router.put('/users/:userId/status', Auth.authenticateToken, Auth.requireAdmin, a
         const updateQuery = "UPDATE users SET account_status = ? WHERE user_id = ?";
         await db.query(updateQuery, [account_status, userId]);
 
-        // Log the action
-        await Auth.logActivity(req.user.user_id, `Admin updated user ${userId} status to ${account_status}`, db);
+        // Log the action with username when available
+        try {
+            const u = await db.query('SELECT username FROM users WHERE user_id = ?', [userId]);
+            const uname = u && u[0] ? u[0].username : `id:${userId}`;
+            await Auth.logActivity(req.user.user_id, `Updated: User status to ${account_status} (${uname})`, db);
+        } catch (_) {}
 
         res.status(200).json({ success: true, message: 'User status updated successfully' });
 
     } catch (error) {
         console.error('Update user status error:', error);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Delete user (soft delete: set account_status='inactive') (admin only)
+router.delete('/users/:userId', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        // Only affect standard users
+        const upd = await db.query("UPDATE users SET account_status = 'inactive' WHERE user_id = ? AND role = 'User'", [userId]);
+        if (upd.affectedRows === 0) {
+            return res.status(404).json({ success: false, error: 'User not found or not deletable' });
+        }
+        // Log activity with username when possible
+        try {
+            const u = await db.query('SELECT username FROM users WHERE user_id = ?', [userId]);
+            const uname = u && u[0] ? u[0].username : `id:${userId}`;
+            await Auth.logActivity(req.user.user_id, `Deleted: User (${uname})`, db);
+        } catch (_) {}
+        res.status(200).json({ success: true, message: 'User deleted (set inactive)' });
+    } catch (error) {
+        console.error('Delete user error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
     }
 });
 
@@ -469,11 +662,25 @@ router.get('/logs', Auth.authenticateToken, Auth.requireAdmin, async (req, res) 
         let whereClause = "WHERE u.role = 'Admin'";
         let params = [];
 
-        // Filter by action type
+        // Filter by action type (normalized) and map to patterns in activity_logs.action
         if (action_type && action_type !== 'all') {
-            whereClause += " AND al.action = ?";
-            params.push(action_type);
-            console.log('🔍 Applied action_type filter:', action_type);
+            const at = String(action_type).toUpperCase();
+            console.log('🔍 Applied action_type filter:', at);
+            if (at === 'LOGIN') {
+                whereClause += " AND (al.action LIKE '%logged in%')";
+            } else if (at === 'LOGOUT') {
+                whereClause += " AND (al.action LIKE '%logged out%')";
+            } else if (at === 'ADD' || at === 'ADDED') {
+                whereClause += " AND (al.action LIKE 'Added:%')";
+            } else if (at === 'UPDATE' || at === 'UPDATED') {
+                whereClause += " AND (al.action LIKE 'Updated:%')";
+            } else if (at === 'DELETE' || at === 'DELETED') {
+                whereClause += " AND (al.action LIKE 'Deleted:%')";
+            } else {
+                // fallback: substring match
+                whereClause += " AND (al.action LIKE ?)";
+                params.push(`%${action_type}%`);
+            }
         }
 
         // Filter by date range
@@ -1158,6 +1365,81 @@ router.post('/verify-password', Auth.authenticateToken, Auth.requireAdmin, async
     } catch (error) {
         console.error('Verify admin password error:', error);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Username-based user routes (admin only)
+router.get('/users/by-username/:username', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
+    try {
+        const { username } = req.params;
+        const users = await db.query(
+            'SELECT user_id, first_name, last_name, username, email, contact_number, tester_type_id, role, account_status, created_at FROM users WHERE username = ? LIMIT 1',
+            [username]
+        );
+        if (!users || users.length === 0) return res.status(404).json({ error: 'User not found' });
+        res.json({ success: true, user: users[0] });
+    } catch (error) {
+        console.error('Get user by username error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+router.put('/users/by-username/:username/status', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
+    try {
+        const { username } = req.params;
+        const status = String(req.body.account_status || '').toLowerCase();
+        if (!['active','inactive','suspended'].includes(status)) {
+            return res.status(400).json({ error: 'Valid account status is required' });
+        }
+        const result = await db.query('UPDATE users SET account_status = ? WHERE username = ?', [status, username]);
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'User not found' });
+        await Auth.logActivity(req.user.user_id, `Updated: User status to ${status} (${username})`, db);
+        res.json({ success: true, message: 'User status updated successfully' });
+    } catch (error) {
+        console.error('Update user status by username error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+router.put('/users/by-username/:username', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
+    try {
+        const { username } = req.params;
+        const rows = await db.query('SELECT user_id FROM users WHERE username = ? LIMIT 1', [username]);
+        if (!rows || rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
+        const userId = rows[0].user_id;
+        const { first_name, last_name, email, tester_type_id, account_status, password, contact_number, username: newUsername } = req.body || {};
+        const sets = [];
+        const params = [];
+        if (typeof first_name === 'string' && first_name.trim() !== '') { sets.push('first_name = ?'); params.push(first_name.trim()); }
+        if (typeof last_name === 'string' && last_name.trim() !== '') { sets.push('last_name = ?'); params.push(last_name.trim()); }
+        if (typeof contact_number === 'string') { sets.push('contact_number = ?'); params.push(contact_number.trim()); }
+        if (typeof tester_type_id !== 'undefined') { sets.push('tester_type_id = ?'); params.push(tester_type_id ? parseInt(tester_type_id) : null); }
+        if (typeof account_status === 'string' && ['active','inactive','suspended'].includes(account_status.toLowerCase())) { sets.push('account_status = ?'); params.push(account_status.toLowerCase()); }
+        if (typeof newUsername === 'string' && newUsername.trim() !== '') {
+            const chk = await db.query('SELECT user_id FROM users WHERE username = ? AND user_id != ?', [newUsername.trim(), userId]);
+            if (chk.length > 0) return res.status(400).json({ success: false, error: 'Username already exists' });
+            sets.push('username = ?'); params.push(newUsername.trim());
+        }
+        if (typeof email === 'string' && email.trim() !== '') {
+            if (!Auth.validateEmail(email)) return res.status(400).json({ success: false, error: 'Invalid email format' });
+            const eChk = await db.query('SELECT user_id FROM users WHERE email = ? AND user_id != ?', [email.trim(), userId]);
+            if (eChk.length > 0) return res.status(400).json({ success: false, error: 'Email already exists' });
+            sets.push('email = ?'); params.push(email.trim());
+        }
+        if (typeof password === 'string' && password.trim() !== '') {
+            if (password.length < 6) return res.status(400).json({ success: false, error: 'Password must be at least 6 characters long' });
+            const hashed = await Auth.hashPassword(password);
+            sets.push('password_hash = ?'); params.push(hashed);
+        }
+        if (sets.length === 0) return res.status(400).json({ success: false, error: 'No valid fields to update' });
+        const sql = `UPDATE users SET ${sets.join(', ')} WHERE user_id = ?`;
+        params.push(userId);
+        await db.query(sql, params);
+        await Auth.logActivity(req.user.user_id, `Updated: User (${username})`, db);
+        res.json({ success: true, message: 'User updated successfully' });
+    } catch (error) {
+        console.error('Update user by username error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
     }
 });
 

@@ -75,7 +75,9 @@ class Auth {
     static async logActivity(userId, action, db) {
         try {
             const query = "INSERT INTO activity_logs (user_id, action) VALUES (?, ?)";
-            await db.query(query, [userId, action]);
+            // Pass NULL for guests to satisfy FK; DB allows NULL for user_id
+            const finalUserId = (userId === undefined || userId === null || userId === 0) ? null : userId;
+            await db.query(query, [finalUserId, action]);
             console.log(`Activity logged: User ID ${userId}, Action: '${action}'`);
         } catch (error) {
             console.error(`Activity log error for User ID ${userId}, Action '${action}':`, error);

@@ -82,6 +82,7 @@ app.get('/api/test', (req, res) => {
 
 // Database connection
 const db = require('./config/database');
+const Auth = require('./config/auth');
 
 // Routes
 const authRoutes = require('./routes/auth');
@@ -104,6 +105,47 @@ const deviceManagementRoutes = require('./routes/device-management');
 const spoilageAnalyticsRoutes = require('./routes/spoilage-analytics');
 
 // API routes
+// Global activity logger (non-blocking)
+app.use('/api', async (req, res, next) => {
+  try {
+    // Attach a hook to log after response is sent to avoid latency
+    const start = Date.now();
+    const userId = (req.user && req.user.user_id) ? req.user.user_id : null;
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    const path = req.originalUrl || req.url;
+    const method = req.method;
+
+    // Only log meaningful actions:
+    // - Mutations (POST/PUT/PATCH/DELETE)
+    // - Explicit auth login/logout endpoints
+    const isMutation = method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE';
+    const isAuthEndpoint = /^\/api\/(auth|admin)\/(login|logout)/i.test(path);
+    const isNoiseEndpoint = /^\/api\/activity_logs/i.test(path); // avoid logging attempts to write logs
+    const LOG_SKIP_MUTATION_PATTERNS = [
+      /^\/api\/admin\/update-profile/i,
+      /^\/api\/ml-training\/add/i,
+      /^\/api\/admin\/verify-password/i
+    ];
+
+    res.on('finish', async () => {
+      try {
+        const status = res.statusCode;
+        const tookMs = Date.now() - start;
+        const userPart = userId ? `User ${userId}` : 'Guest';
+        // Only log authenticated successful mutations; skip guests and errors (e.g., 404/401)
+        const isSuccess = status < 400;
+        const isAuthenticated = !!userId;
+        const shouldLog = isAuthenticated && isSuccess && isMutation && !isNoiseEndpoint && !isAuthEndpoint && !LOG_SKIP_MUTATION_PATTERNS.some(rx => rx.test(path));
+        if (shouldLog) {
+          const action = `${userPart} ${method} ${path} (${status}) from ${ip} in ${tookMs}ms`;
+          await Auth.logActivity(userId, action, db);
+        }
+      } catch (_) {}
+    });
+  } catch (_) {}
+  next();
+});
+
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);

@@ -57,6 +57,15 @@ router.post('/add', Auth.authenticateToken, async (req, res) => {
 
         const result = await db.query(sql, params);
 
+        // Activity log in the same style as activity_logs samples
+        try {
+            const actorId = req.user && req.user.user_id ? req.user.user_id : null;
+            const actionText = `Added Training Data (${String(food_name).trim()})`;
+            await Auth.logActivity(actorId, actionText, db);
+        } catch (logErr) {
+            console.warn('ML add training activity log failed (continuing):', logErr.message);
+        }
+
         return res.status(201).json({
             success: true,
             message: 'Training data added',
