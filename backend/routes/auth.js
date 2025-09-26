@@ -3,6 +3,7 @@ const router = express.Router();
 const Auth = require('../config/auth');
 const db = require('../config/database');
 const { verifyRecaptcha } = require('../config/recaptcha');
+const emailService = require('../config/email');
 
 // Login route
 router.post('/login', async (req, res) => {
@@ -296,20 +297,26 @@ router.post('/forgot-password', async (req, res) => {
 
         // Generate OTP
         const otp = Auth.generateOTP();
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
 
-        // Store OTP in database
-        const otpQuery = "INSERT INTO password_resets (user_id, otp, expires_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE otp = ?, expires_at = ?";
-        await db.query(otpQuery, [user.user_id, otp, expiresAt, otp, expiresAt]);
+        // Store OTP in users table using existing columns with MySQL date function
+        const otpQuery = "UPDATE users SET reset_otp = ?, otp_expiry = DATE_ADD(NOW(), INTERVAL 10 MINUTE) WHERE user_id = ?";
+        await db.query(otpQuery, [otp, user.user_id]);
 
-        // TODO: Send email with OTP (implement email service)
-        console.log(`Password reset OTP for ${email}: ${otp}`);
-
-        res.status(200).json({ 
-            success: true, 
-            message: 'Password reset instructions sent to your email',
-            otp: otp // Remove this in production
-        });
+        // Send OTP via email
+        const emailResult = await emailService.sendOTPEmail(email, otp, `${user.first_name} ${user.last_name}`);
+        
+        if (emailResult.success) {
+            res.status(200).json({ 
+                success: true, 
+                message: 'Password reset instructions sent to your email'
+            });
+        } else {
+            res.status(200).json({ 
+                success: true, 
+                message: 'Password reset instructions sent to your email',
+                otp: otp // Provide OTP in case email fails
+            });
+        }
 
     } catch (error) {
         console.error('Forgot password error:', error);

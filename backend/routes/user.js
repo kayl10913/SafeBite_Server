@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Auth = require('../config/auth');
 const db = require('../config/database');
+const emailService = require('../config/email');
 
 // Get food items (authenticated user)
 router.get('/food-items', Auth.authenticateToken, async (req, res) => {
@@ -1631,6 +1632,233 @@ router.delete('/ml-predictions/:foodName', Auth.authenticateToken, async (req, r
     } catch (error) {
         console.error('Delete ML predictions error:', error);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Verify OTP for password reset
+router.post('/verify-otp', async (req, res) => {
+    try {
+        const { email, otp } = req.body;
+
+        // Validate input
+        if (!email || !otp) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Email and OTP are required' 
+            });
+        }
+
+        if (!Auth.validateEmail(email)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Invalid email format' 
+            });
+        }
+
+        // Check if user exists
+        const userQuery = "SELECT user_id, first_name, last_name FROM users WHERE email = ? AND account_status = 'active'";
+        const users = await db.query(userQuery, [email]);
+
+        if (users.length === 0) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'User not found' 
+            });
+        }
+
+        const user = users[0];
+
+        // Verify OTP from database using existing columns
+        const otpQuery = `SELECT reset_otp, otp_expiry FROM users WHERE user_id = ? AND reset_otp = ? AND otp_expiry > NOW()`;
+        const otpResults = await db.query(otpQuery, [user.user_id, otp]);
+
+        if (otpResults.length === 0) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Invalid or expired OTP. Please check the code and try again.' 
+            });
+        }
+
+        res.status(200).json({ 
+            success: true, 
+            message: 'OTP verified successfully. You can now reset your password.',
+            reset_token: 'otp_verified', // Simple token to indicate OTP is verified
+            expires_in: 600 // 10 minutes in seconds (same as OTP expiry)
+        });
+
+    } catch (error) {
+        console.error('Verify OTP error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Internal server error' 
+        });
+    }
+});
+
+// Reset password with OTP verification
+router.post('/reset-password', async (req, res) => {
+    try {
+        const { email, otp, new_password, confirm_password } = req.body;
+
+        // Validate input
+        if (!email || !otp || !new_password || !confirm_password) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'All fields are required' 
+            });
+        }
+
+        if (!Auth.validateEmail(email)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Invalid email format' 
+            });
+        }
+
+        if (new_password.length < 8) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Password must be at least 8 characters' 
+            });
+        }
+
+        // Check password requirements
+        const hasUpper = /[A-Z]/.test(new_password);
+        const hasLower = /[a-z]/.test(new_password);
+        const hasNumber = /[0-9]/.test(new_password);
+        const hasSpecial = /[^a-zA-Z0-9]/.test(new_password);
+
+        if (!hasUpper || !hasLower || !hasNumber || !hasSpecial) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Password must contain uppercase, lowercase, number, and special character' 
+            });
+        }
+
+        if (new_password !== confirm_password) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Passwords do not match' 
+            });
+        }
+
+        // Check if user exists
+        const userQuery = "SELECT user_id FROM users WHERE email = ? AND account_status = 'active'";
+        const users = await db.query(userQuery, [email]);
+
+        if (users.length === 0) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'User not found' 
+            });
+        }
+
+        const user = users[0];
+
+        // Verify OTP using existing columns
+        const resetQuery = `SELECT user_id FROM users WHERE user_id = ? AND reset_otp = ? AND otp_expiry > NOW()`;
+        const resetResults = await db.query(resetQuery, [user.user_id, otp]);
+
+        if (resetResults.length === 0) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Invalid or expired OTP' 
+            });
+        }
+
+        // Hash new password
+        const hashedPassword = await Auth.hashPassword(new_password);
+
+        // Update user password
+        const updatePasswordQuery = "UPDATE users SET password_hash = ? WHERE user_id = ?";
+        await db.query(updatePasswordQuery, [hashedPassword, user.user_id]);
+
+        // Clean up password reset data
+        const cleanupQuery = "UPDATE users SET reset_otp = NULL, otp_expiry = NULL WHERE user_id = ?";
+        await db.query(cleanupQuery, [user.user_id]);
+
+        // Log activity
+        try { 
+            await Auth.logActivity(user.user_id, 'Password reset via OTP verification', db); 
+        } catch (_) {}
+
+        res.status(200).json({ 
+            success: true, 
+            message: 'Password reset successfully' 
+        });
+
+    } catch (error) {
+        console.error('Reset password error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Internal server error' 
+        });
+    }
+});
+
+// Resend OTP for password reset
+router.post('/resend-otp', async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        if (!email || !Auth.validateEmail(email)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Valid email is required' 
+            });
+        }
+
+        // Check if user exists
+        const userQuery = "SELECT user_id, first_name, last_name FROM users WHERE email = ? AND account_status = 'active'";
+        const users = await db.query(userQuery, [email]);
+
+        if (users.length === 0) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'User not found' 
+            });
+        }
+
+        const user = users[0];
+
+        // Generate new OTP
+        const otp = Auth.generateOTP();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+
+        // Update OTP in users table
+        const otpQuery = `
+            UPDATE users 
+            SET reset_otp = ?, otp_expiry = ? 
+            WHERE user_id = ?
+        `;
+        await db.query(otpQuery, [otp, expiresAt, user.user_id]);
+
+        // Send OTP via email
+        const emailResult = await emailService.sendOTPEmail(email, otp, `${user.first_name} ${user.last_name}`);
+        
+        if (emailResult.success) {
+            console.log(`📧 OTP resent to ${email}: ${otp}`);
+            res.status(200).json({ 
+                success: true, 
+                message: 'OTP resent successfully',
+                otp: otp // Remove this in production
+            });
+        } else {
+            console.error('📧 Failed to resend OTP email:', emailResult.message);
+            res.status(200).json({ 
+                success: true, 
+                message: 'OTP resent successfully',
+                otp: otp, // Still provide OTP in case email fails
+                emailWarning: 'Email delivery may have failed. Check console for OTP.'
+            });
+        }
+
+    } catch (error) {
+        console.error('Resend OTP error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Internal server error' 
+        });
     }
 });
 
