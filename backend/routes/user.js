@@ -1837,14 +1837,12 @@ router.post('/resend-otp', async (req, res) => {
         const emailResult = await emailService.sendOTPEmail(email, otp, `${user.first_name} ${user.last_name}`);
         
         if (emailResult.success) {
-            console.log(`📧 OTP resent to ${email}: ${otp}`);
             res.status(200).json({ 
                 success: true, 
                 message: 'OTP resent successfully',
                 otp: otp // Remove this in production
             });
         } else {
-            console.error('📧 Failed to resend OTP email:', emailResult.message);
             res.status(200).json({ 
                 success: true, 
                 message: 'OTP resent successfully',
@@ -1854,7 +1852,6 @@ router.post('/resend-otp', async (req, res) => {
         }
 
     } catch (error) {
-        console.error('Resend OTP error:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Internal server error' 

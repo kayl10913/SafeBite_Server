@@ -122,7 +122,6 @@ class EmailService {
             };
 
             const result = await this.transporter.sendMail(mailOptions);
-            console.log('📧 OTP Email sent successfully:', result.messageId);
             
             return { 
                 success: true, 
@@ -180,7 +179,6 @@ class EmailService {
             };
 
             const result = await this.transporter.sendMail(mailOptions);
-            console.log('📧 Verification email sent:', result.messageId);
             return { success: true, message: 'Verification email sent', messageId: result.messageId };
         } catch (error) {
             console.error('📧 Verification email failed:', error);
@@ -225,7 +223,6 @@ class EmailService {
             };
 
             const result = await this.transporter.sendMail(mailOptions);
-            console.log('📧 Welcome email sent successfully:', result.messageId);
             
             return { success: true, message: 'Welcome email sent successfully' };
 
