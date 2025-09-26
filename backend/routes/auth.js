@@ -4,6 +4,8 @@ const Auth = require('../config/auth');
 const db = require('../config/database');
 const { verifyRecaptcha } = require('../config/recaptcha');
 const emailService = require('../config/email');
+// In-memory store for signup verification OTPs (email -> { otp, expiresAt })
+const signupVerificationStore = new Map();
 
 // Login route
 router.post('/login', async (req, res) => {
@@ -325,4 +327,65 @@ router.post('/forgot-password', async (req, res) => {
 });
 
 module.exports = router;
+
+// Signup email verification: send OTP
+router.post('/send-signup-otp', async (req, res) => {
+    try {
+        const { email } = req.body || {};
+        if (!email || !Auth.validateEmail(email)) {
+            return res.status(400).json({ success: false, message: 'Valid email is required' });
+        }
+
+        // Generate and cache OTP for 10 minutes
+        const otp = Auth.generateOTP();
+        const expiresAt = Date.now() + 10 * 60 * 1000;
+        signupVerificationStore.set(email, { otp, expiresAt });
+
+        // Attempt to send email (fallback: still succeed but include dev hint only in non-prod)
+        const emailResult = await emailService.sendVerificationEmail?.(email, otp, 'User');
+
+        // Do not leak OTP in production; here we only return generic message
+        return res.status(200).json({ success: true, message: 'Verification code sent to your email' });
+    } catch (error) {
+        console.error('Send signup OTP error:', error);
+        return res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+});
+
+// Signup email verification: verify OTP
+router.post('/verify-signup-otp', async (req, res) => {
+    try {
+        const { email, otp } = req.body || {};
+        if (!email || !otp || !Auth.validateEmail(email)) {
+            return res.status(400).json({ success: false, message: 'Email and OTP are required' });
+        }
+
+        const entry = signupVerificationStore.get(email);
+        if (!entry || entry.expiresAt < Date.now() || String(entry.otp) !== String(otp)) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired verification code' });
+        }
+
+        // Mark as verified by replacing store entry with a verified flag for short period
+        signupVerificationStore.set(email, { verified: true, expiresAt: Date.now() + 15 * 60 * 1000 });
+        return res.status(200).json({ success: true, message: 'Email verified' });
+    } catch (error) {
+        console.error('Verify signup OTP error:', error);
+        return res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+});
+
+// Middleware to require verified email for registration
+router.use('/register', (req, res, next) => {
+    try {
+        const { email } = req.body || {};
+        if (!email) return res.status(400).json({ error: 'Email is required' });
+        const entry = signupVerificationStore.get(email);
+        if (!entry || !entry.verified || entry.expiresAt < Date.now()) {
+            return res.status(400).json({ error: 'Please verify your email before registering' });
+        }
+        return next();
+    } catch (e) {
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+});
 

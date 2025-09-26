@@ -140,6 +140,53 @@ class EmailService {
         }
     }
 
+    async sendVerificationEmail(email, otp, userName = 'User') {
+        try {
+            if (!this.transporter) {
+                console.log(`📧 [DEV MODE] Verification email would be sent to: ${email}`);
+                console.log(`📧 [DEV MODE] Verification Code: ${otp}`);
+                return { success: true, message: 'Verification code logged to console (development mode)' };
+            }
+
+            const mailOptions = {
+                from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+                to: email,
+                subject: 'SafeBite - Verify your email',
+                html: `
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                        <div style="text-align: center; margin-bottom: 30px;">
+                            <h1 style="color: #2c3e50; margin: 0;">SafeBite</h1>
+                            <p style="color: #7f8c8d; margin: 5px 0;">Email Verification</p>
+                        </div>
+                        <div style="background-color: #f8f9fa; padding: 30px; border-radius: 10px; margin-bottom: 20px;">
+                            <p style="color: #34495e; line-height: 1.6;">Hello ${userName},</p>
+                            <p style="color: #34495e; line-height: 1.6;">Use this code to verify your email:</p>
+                            <div style="text-align: center; margin: 30px 0;">
+                                <div style="display: inline-block; background-color: #10b981; color: white; padding: 15px 30px; border-radius: 8px; font-size: 24px; font-weight: bold; letter-spacing: 3px;">
+                                    ${otp}
+                                </div>
+                            </div>
+                            <p style="color: #34495e; line-height: 1.6;">
+                                This code expires in 10 minutes.
+                            </p>
+                        </div>
+                        <div style="text-align: center; color: #7f8c8d; font-size: 12px;">
+                            <p>This is an automated message. Please do not reply to this email.</p>
+                            <p>&copy; 2024 SafeBite. All rights reserved.</p>
+                        </div>
+                    </div>
+                `,
+                text: `SafeBite verification code: ${otp} (valid for 10 minutes)`
+            };
+
+            const result = await this.transporter.sendMail(mailOptions);
+            console.log('📧 Verification email sent:', result.messageId);
+            return { success: true, message: 'Verification email sent', messageId: result.messageId };
+        } catch (error) {
+            console.error('📧 Verification email failed:', error);
+            return { success: false, message: 'Failed to send verification email', error: error.message };
+        }
+    }
     async sendWelcomeEmail(email, userName) {
         try {
             if (!this.transporter) {
