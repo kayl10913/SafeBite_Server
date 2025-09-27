@@ -1,21 +1,129 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const rateLimit = require('express-rate-limit');
+const cookieParser = require('cookie-parser');
+const helmet = require('helmet');
 require('dotenv').config({ path: '../.inv' });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// Security Headers Middleware (Helmet)
+app.use(helmet({
+    // Content Security Policy
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            styleSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com", "https://fonts.googleapis.com"],
+            scriptSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com", "https://www.google.com", "https://www.gstatic.com"],
+            fontSrc: ["'self'", "https://fonts.gstatic.com", "https://cdnjs.cloudflare.com"],
+            imgSrc: ["'self'", "data:", "https:"],
+            connectSrc: ["'self'"],
+            frameSrc: ["'none'"],
+            objectSrc: ["'none'"],
+            upgradeInsecureRequests: []
+        }
+    },
+    // Cross-Origin Embedder Policy
+    crossOriginEmbedderPolicy: false, // Disable for development
+    // DNS Prefetch Control
+    dnsPrefetchControl: true,
+    // Expect-CT
+    expectCt: {
+        maxAge: 86400,
+        enforce: true
+    },
+    // Feature Policy / Permissions Policy
+    permissionsPolicy: {
+        camera: [],
+        microphone: [],
+        geolocation: [],
+        payment: [],
+        usb: []
+    },
+    // Frameguard
+    frameguard: { action: 'deny' },
+    // Hide X-Powered-By
+    hidePoweredBy: true,
+    // HSTS
+    hsts: {
+        maxAge: 31536000,
+        includeSubDomains: true,
+        preload: true
+    },
+    // IE No Open
+    ieNoOpen: true,
+    // No Sniff
+    noSniff: true,
+    // Origin Agent Cluster
+    originAgentCluster: true,
+    // Referrer Policy
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    // XSS Filter
+    xssFilter: true
+}));
+
+// CORS Middleware
 app.use(cors({
-    origin: '*',
-    credentials: true,
+    origin: ['http://localhost:3000', 'http://127.0.0.1:3000'], // Specific origins for security
+    credentials: true, // Allow cookies to be sent
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
+// Rate limiting configurations
+const generalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limit each IP to 100 requests per windowMs
+    message: {
+        error: 'Too many requests from this IP, please try again later.',
+        retryAfter: '15 minutes'
+    },
+    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+});
+
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // Limit each IP to 5 login attempts per windowMs
+    message: {
+        error: 'Too many login attempts from this IP, please try again later.',
+        retryAfter: '15 minutes'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true, // Don't count successful requests
+});
+
+const sensorDataLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minute
+    max: 60, // Limit each IP to 60 sensor data submissions per minute
+    message: {
+        error: 'Too many sensor data submissions, please slow down.',
+        retryAfter: '1 minute'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+const aiAnalysisLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minute
+    max: 10, // Limit each IP to 10 AI analysis requests per minute
+    message: {
+        error: 'Too many AI analysis requests, please wait before trying again.',
+        retryAfter: '1 minute'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+// Apply general rate limiting to all routes
+app.use(generalLimiter);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
 // Serve static files from client app
 app.use('/frontend', express.static(path.join(__dirname, '../../SafeBite_Client/frontend')));
@@ -146,11 +254,14 @@ app.use('/api', async (req, res, next) => {
   next();
 });
 
-app.use('/api/auth', authRoutes);
+// Apply specific rate limiters to sensitive endpoints
+app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/admin', authLimiter, adminRoutes);
+app.use('/api/sensor', sensorDataLimiter, sensorRoutes);
+app.use('/api/ai', aiAnalysisLimiter, aiRoutes);
+
+// Regular routes with general rate limiting
 app.use('/api/users', userRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/sensor', sensorRoutes);
-app.use('/api/ai', aiRoutes);
 app.use('/api/sensor-analytics', sensorAnalyticsRoutes);
 app.use('/api/feedbacks', feedbacksRoutes);
 app.use('/api/ml', mlRoutes);

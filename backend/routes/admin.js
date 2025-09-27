@@ -52,7 +52,10 @@ router.post('/login', async (req, res) => {
         // Log successful admin login
         await Auth.logActivity(admin.user_id, 'Admin logged in successfully', db);
 
-        // Prepare response data
+        // Set secure httpOnly cookie for JWT token
+        Auth.setSecureTokenCookie(res, jwtToken);
+
+        // Prepare response data (remove JWT token from response body for security)
         const response = {
             success: true,
             message: 'Admin login successful',
@@ -68,8 +71,8 @@ router.post('/login', async (req, res) => {
             session: {
                 token: sessionToken,
                 expires_at: expiresAt
-            },
-            jwt_token: jwtToken
+            }
+            // jwt_token removed from response for security
         };
 
         res.status(200).json(response);
@@ -84,6 +87,9 @@ router.post('/login', async (req, res) => {
 router.post('/logout', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
     try {
         const adminId = req.user.user_id;
+        
+        // Clear secure token cookie
+        Auth.clearTokenCookie(res);
         
         // Log admin logout
         await Auth.logActivity(adminId, 'Admin logged out successfully', db);

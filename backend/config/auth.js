@@ -85,11 +85,44 @@ class Auth {
     }
     
     /**
-     * Middleware to authenticate JWT token
+     * Set secure httpOnly cookie for JWT token
+     */
+    static setSecureTokenCookie(res, token, expiresIn = '7d') {
+        const isProduction = process.env.NODE_ENV === 'production';
+        
+        res.cookie('jwt_token', token, {
+            httpOnly: true,           // Prevent XSS attacks
+            secure: isProduction,     // Only send over HTTPS in production
+            sameSite: 'strict',       // Prevent CSRF attacks
+            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+            path: '/'                 // Available site-wide
+        });
+    }
+    
+    /**
+     * Clear secure token cookie
+     */
+    static clearTokenCookie(res) {
+        res.clearCookie('jwt_token', {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            path: '/'
+        });
+    }
+    
+    /**
+     * Middleware to authenticate JWT token (supports both cookies and headers)
      */
     static authenticateToken(req, res, next) {
-        const authHeader = req.headers['authorization'];
-        const token = authHeader && authHeader.split(' ')[1];
+        // Try to get token from httpOnly cookie first (more secure)
+        let token = req.cookies?.jwt_token;
+        
+        // Fallback to Authorization header for backward compatibility
+        if (!token) {
+            const authHeader = req.headers['authorization'];
+            token = authHeader && authHeader.split(' ')[1];
+        }
         
         if (!token) {
             return res.status(401).json({ error: 'Access token required' });

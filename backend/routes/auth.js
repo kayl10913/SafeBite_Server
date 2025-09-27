@@ -61,7 +61,10 @@ router.post('/login', async (req, res) => {
         // Log successful login
         await Auth.logActivity(user.user_id, 'User logged in successfully', db);
 
-        // Prepare response data
+        // Set secure httpOnly cookie for JWT token
+        Auth.setSecureTokenCookie(res, jwtToken);
+
+        // Prepare response data (remove JWT token from response body for security)
         const response = {
             success: true,
             message: 'Login successful',
@@ -77,14 +80,36 @@ router.post('/login', async (req, res) => {
             session: {
                 token: sessionToken,
                 expires_at: expiresAt
-            },
-            jwt_token: jwtToken
+            }
+            // jwt_token removed from response for security
         };
 
         res.status(200).json(response);
 
     } catch (error) {
         console.error('Login error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Logout route
+router.post('/logout', Auth.authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.user_id;
+        
+        // Clear secure token cookie
+        Auth.clearTokenCookie(res);
+        
+        // Log logout activity
+        await Auth.logActivity(userId, 'User logged out successfully', db);
+        
+        res.status(200).json({
+            success: true,
+            message: 'Logout successful'
+        });
+        
+    } catch (error) {
+        console.error('Logout error:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
