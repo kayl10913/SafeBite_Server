@@ -145,6 +145,96 @@ app.get('/api/test', (req, res) => {
     });
 });
 
+// Contact form API endpoint
+app.post('/api/contact', (req, res) => {
+    try {
+        const { name, email, message } = req.body;
+        
+        // Basic validation
+        if (!name || !email || !message) {
+            return res.status(400).json({
+                success: false,
+                error: 'All fields are required'
+            });
+        }
+        
+        // Email validation
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid email address'
+            });
+        }
+        
+        // Log contact form submission (you can extend this to save to database)
+        console.log('Contact form submission:', {
+            name,
+            email,
+            message,
+            timestamp: new Date().toISOString()
+        });
+        
+        // For now, just return success (you can integrate with email service later)
+        res.json({
+            success: true,
+            message: 'Thank you for your message! We\'ll get back to you soon.',
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('Contact form error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to process contact form'
+        });
+    }
+});
+
+// Newsletter subscription API endpoint
+app.post('/api/newsletter', (req, res) => {
+    try {
+        const { email } = req.body;
+        
+        // Basic validation
+        if (!email) {
+            return res.status(400).json({
+                success: false,
+                error: 'Email is required'
+            });
+        }
+        
+        // Email validation
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid email address'
+            });
+        }
+        
+        // Log newsletter subscription (you can extend this to save to database)
+        console.log('Newsletter subscription:', {
+            email,
+            timestamp: new Date().toISOString()
+        });
+        
+        // For now, just return success (you can integrate with email service later)
+        res.json({
+            success: true,
+            message: 'Successfully subscribed to our newsletter!',
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('Newsletter subscription error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to process newsletter subscription'
+        });
+    }
+});
+
 // Database connection
 const db = require('./config/database');
 const Auth = require('./config/auth');
