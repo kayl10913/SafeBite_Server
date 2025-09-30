@@ -371,6 +371,33 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
             });
         }
 
+        // Resolve active model (if any)
+        let activeModel = null;
+        try {
+            const [modelRow] = await db.query(
+                `SELECT model_name, model_version, model_type, model_path, created_at, last_trained
+                 FROM ml_models
+                 WHERE is_active = 1
+                 ORDER BY COALESCE(last_trained, created_at) DESC
+                 LIMIT 1`
+            );
+            if (modelRow && modelRow.model_version) {
+                activeModel = modelRow;
+            } else {
+                const [anyModel] = await db.query(
+                    `SELECT model_name, model_version, model_type, model_path, created_at, last_trained
+                     FROM ml_models
+                     ORDER BY COALESCE(last_trained, created_at) DESC
+                     LIMIT 1`
+                );
+                if (anyModel && anyModel.model_version) {
+                    activeModel = anyModel;
+                }
+            }
+        } catch (e) {
+            console.warn('Could not fetch model (active or latest) for ml-workflow predict:', e.message);
+        }
+
         // Primary: derive status from ML training table; Fallback: SmartSense table; Else: client-provided
         const trained = await assessFromTrainingData(db, food_name, food_category, parseFloat(finalTemperature), parseFloat(finalHumidity), parseFloat(finalGasLevel));
         const smart = trained ? null : assessSmartSenseStatus(food_name, food_category, parseFloat(finalTemperature), parseFloat(finalHumidity), parseFloat(finalGasLevel));
@@ -396,11 +423,17 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
                 finalProbability,
                 finalStatus,
                 finalConfidence,
-                '1.0',
+                (activeModel && activeModel.model_version) ? activeModel.model_version : '1.0',
                 JSON.stringify({
                     ai_analysis: true,
                     timestamp: new Date().toISOString(),
                     model_type: trained ? 'smart_training_db' : (smart ? 'smartsense_table' : 'client_provided'),
+                    model: activeModel ? {
+                        name: activeModel.model_name,
+                        version: activeModel.model_version,
+                        type: activeModel.model_type,
+                        path: activeModel.model_path
+                    } : { version: '1.0' },
                     source_details: trained && trained.meta ? trained.meta : undefined
                 }),
                 JSON.stringify(recommendations || []),
@@ -435,6 +468,11 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
                         gas_level: finalGasLevel
                     },
                     ai_thresholds: aiThresholds || null,
+                    model: activeModel ? {
+                        name: activeModel.model_name,
+                        version: activeModel.model_version,
+                        type: activeModel.model_type
+                    } : { version: '1.0' },
                     prediction_id: result.insertId,
                     timestamp: new Date().toISOString()
                 });

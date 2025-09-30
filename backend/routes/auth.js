@@ -64,7 +64,8 @@ router.post('/login', async (req, res) => {
         // Set secure httpOnly cookie for JWT token
         Auth.setSecureTokenCookie(res, jwtToken);
 
-        // Prepare response data (remove JWT token from response body for security)
+
+        // Prepare response data (include JWT token for frontend compatibility)
         const response = {
             success: true,
             message: 'Login successful',
@@ -80,8 +81,8 @@ router.post('/login', async (req, res) => {
             session: {
                 token: sessionToken,
                 expires_at: expiresAt
-            }
-            // jwt_token removed from response for security
+            },
+            jwt_token: jwtToken // Added for frontend compatibility
         };
 
         res.status(200).json(response);

@@ -341,6 +341,32 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
     }
 
     try {
+        // Resolve active model (if any)
+        let activeModel = null;
+        try {
+            const [modelRow] = await db.query(
+                `SELECT model_name, model_version, model_type, model_path, created_at, last_trained
+                 FROM ml_models
+                 WHERE is_active = 1
+                 ORDER BY COALESCE(last_trained, created_at) DESC
+                 LIMIT 1`
+            );
+            if (modelRow && modelRow.model_version) {
+                activeModel = modelRow;
+            } else {
+                const [anyModel] = await db.query(
+                    `SELECT model_name, model_version, model_type, model_path, created_at, last_trained
+                     FROM ml_models
+                     ORDER BY COALESCE(last_trained, created_at) DESC
+                     LIMIT 1`
+                );
+                if (anyModel && anyModel.model_version) {
+                    activeModel = anyModel;
+                }
+            }
+        } catch (e) {
+            console.warn('Could not fetch model (active or latest), defaulting to hardcoded version:', e.message);
+        }
         // Get similar training data for this food category
         const trainingDataRows = await db.query(
             `SELECT * FROM ml_training_data 
@@ -416,7 +442,17 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
             [
                 user_id, foodIdValue, food_name, food_category, tempValue, humidityValue, gasValue,
                 prediction.spoilage_probability, prediction.spoilage_status, prediction.confidence_score,
-                '1.0', JSON.stringify(prediction.raw_data), JSON.stringify(prediction.recommendations),
+                (activeModel && activeModel.model_version) ? activeModel.model_version : '1.0',
+                JSON.stringify({
+                    ...prediction.raw_data,
+                    model: activeModel ? {
+                        name: activeModel.model_name,
+                        version: activeModel.model_version,
+                        type: activeModel.model_type,
+                        path: activeModel.model_path
+                    } : { version: '1.0' }
+                }),
+                JSON.stringify(prediction.recommendations),
                 is_training_data || 0, actual_outcome || null
             ]
         );
@@ -467,6 +503,11 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
                         gas_level: gasValue
                     },
                     prediction_id: result.insertId,
+                    model: activeModel ? {
+                        name: activeModel.model_name,
+                        version: activeModel.model_version,
+                        type: activeModel.model_type
+                    } : { version: '1.0' },
                     recommendations: prediction.recommendations,
                     timestamp: new Date().toISOString()
                 });

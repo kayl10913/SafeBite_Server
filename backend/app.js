@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const rateLimit = require('express-rate-limit');
+// const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 require('dotenv').config({ path: '../.inv' });
@@ -72,54 +72,11 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
-// Rate limiting configurations
-const generalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // Limit each IP to 100 requests per windowMs
-    message: {
-        error: 'Too many requests from this IP, please try again later.',
-        retryAfter: '15 minutes'
-    },
-    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-});
 
-const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // Limit each IP to 5 login attempts per windowMs
-    message: {
-        error: 'Too many login attempts from this IP, please try again later.',
-        retryAfter: '15 minutes'
-    },
-    standardHeaders: true,
-    legacyHeaders: false,
-    skipSuccessfulRequests: true, // Don't count successful requests
-});
+// Rate limiting is disabled for development
 
-const sensorDataLimiter = rateLimit({
-    windowMs: 1 * 60 * 1000, // 1 minute
-    max: 60, // Limit each IP to 60 sensor data submissions per minute
-    message: {
-        error: 'Too many sensor data submissions, please slow down.',
-        retryAfter: '1 minute'
-    },
-    standardHeaders: true,
-    legacyHeaders: false,
-});
 
-const aiAnalysisLimiter = rateLimit({
-    windowMs: 1 * 60 * 1000, // 1 minute
-    max: 10, // Limit each IP to 10 AI analysis requests per minute
-    message: {
-        error: 'Too many AI analysis requests, please wait before trying again.',
-        retryAfter: '1 minute'
-    },
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
-// Apply general rate limiting to all routes
-app.use(generalLimiter);
+// No general rate limiting applied
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -254,13 +211,15 @@ app.use('/api', async (req, res, next) => {
   next();
 });
 
-// Apply specific rate limiters to sensitive endpoints
-app.use('/api/auth', authLimiter, authRoutes);
-app.use('/api/admin', authLimiter, adminRoutes);
-app.use('/api/sensor', sensorDataLimiter, sensorRoutes);
-app.use('/api/ai', aiAnalysisLimiter, aiRoutes);
+
+// No rate limiters applied to any endpoints
+app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/sensor', sensorRoutes);
+app.use('/api/ai', aiRoutes);
 
 // Regular routes with general rate limiting
+// No rate limiter on user routes
 app.use('/api/users', userRoutes);
 app.use('/api/sensor-analytics', sensorAnalyticsRoutes);
 app.use('/api/feedbacks', feedbacksRoutes);
