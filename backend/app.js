@@ -3,74 +3,57 @@ const cors = require('cors');
 const path = require('path');
 // const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
-const helmet = require('helmet');
+// const helmet = require('helmet'); // Disabled for development
 require('dotenv').config({ path: '../.inv' });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const isDevelopment = process.env.NODE_ENV !== 'production';
 
-// Security Headers Middleware (Helmet)
-app.use(helmet({
-    // Content Security Policy
-    contentSecurityPolicy: {
-        directives: {
-            defaultSrc: ["'self'"],
-            styleSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com", "https://fonts.googleapis.com"],
-            scriptSrc: ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com", "https://www.google.com", "https://www.gstatic.com"],
-            fontSrc: ["'self'", "https://fonts.gstatic.com", "https://cdnjs.cloudflare.com"],
-            imgSrc: ["'self'", "data:", "https:"],
-            connectSrc: ["'self'"],
-            frameSrc: ["'none'"],
-            objectSrc: ["'none'"],
-            upgradeInsecureRequests: []
-        }
-    },
-    // Cross-Origin Embedder Policy
-    crossOriginEmbedderPolicy: false, // Disable for development
-    // DNS Prefetch Control
-    dnsPrefetchControl: true,
-    // Expect-CT
-    expectCt: {
-        maxAge: 86400,
-        enforce: true
-    },
-    // Feature Policy / Permissions Policy
-    permissionsPolicy: {
-        camera: [],
-        microphone: [],
-        geolocation: [],
-        payment: [],
-        usb: []
-    },
-    // Frameguard
-    frameguard: { action: 'deny' },
-    // Hide X-Powered-By
-    hidePoweredBy: true,
-    // HSTS
-    hsts: {
-        maxAge: 31536000,
-        includeSubDomains: true,
-        preload: true
-    },
-    // IE No Open
-    ieNoOpen: true,
-    // No Sniff
-    noSniff: true,
-    // Origin Agent Cluster
-    originAgentCluster: true,
-    // Referrer Policy
-    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
-    // XSS Filter
-    xssFilter: true
-}));
+// Security Headers Middleware (Helmet) - DISABLED for development
+// app.use(helmet());
 
 // CORS Middleware
-app.use(cors({
-    origin: ['http://localhost:3000', 'http://127.0.0.1:3000'], // Specific origins for security
-    credentials: true, // Allow cookies to be sent
+const corsOptions = isDevelopment ? {
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+        
+        // Allow localhost and network IPs in development
+        const allowedOrigins = [
+            'http://localhost:3000',
+            'http://127.0.0.1:3000',
+            'http://192.168.137.98:3000',
+            /^http:\/\/192\.168\.\d+\.\d+:3000$/, // Allow any 192.168.x.x:3000
+            /^http:\/\/10\.\d+\.\d+\.\d+:3000$/,  // Allow any 10.x.x.x:3000
+            /^http:\/\/172\.(1[6-9]|2\d|3[01])\.\d+\.\d+:3000$/ // Allow 172.16-31.x.x:3000
+        ];
+        
+        const isAllowed = allowedOrigins.some(allowedOrigin => {
+            if (typeof allowedOrigin === 'string') {
+                return origin === allowedOrigin;
+            } else {
+                return allowedOrigin.test(origin);
+            }
+        });
+        
+        if (isAllowed) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-}));
+} : {
+    origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+};
+
+app.use(cors(corsOptions));
 
 
 // Rate limiting is disabled for development
