@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Auth = require('../config/auth');
 const db = require('../config/database');
+const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
 
 // SmartSense spoilage assessment (mirrors frontend logic at a high level)
 function assessSmartSenseStatus(foodName, category, temperature, humidity, gasLevel) {
@@ -32,22 +33,46 @@ function assessSmartSenseStatus(foodName, category, temperature, humidity, gasLe
 		return { status: 'unsafe', probability: 95, confidence: 90 };
 	}
 
-	// Distance-based soft classification
-	const dSpoil = Math.abs((temperature - b.spoiled.temperature))
-		+ Math.abs((humidity - b.spoiled.humidity))
-		+ Math.abs((gasLevel - b.spoiled.gas));
-	const dNormal = Math.abs((temperature - b.normal.temperature))
-		+ Math.abs((humidity - b.normal.humidity))
-		+ Math.abs((gasLevel - b.normal.gas));
-	const ratio = dNormal / (dSpoil + dNormal);
-
+	// Apply gas emission thresholds for all foods - PRIORITY OVER OTHER FACTORS
+	const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(gasLevel);
+	
+	// If gas analysis indicates high or medium risk, use that result immediately
+	if (gasAnalysis.riskLevel === 'high' || gasAnalysis.riskLevel === 'medium') {
+		return {
+			status: gasAnalysis.status,
+			probability: gasAnalysis.probability,
+			confidence: gasAnalysis.confidence,
+			recommendation: gasAnalysis.recommendation,
+			gasThreshold: gasAnalysis.threshold
+		};
+	}
+	
+	// For low risk gas levels, analyze environmental conditions based on baseline values
+	// Gas emission thresholds take priority - if gas is safe, food is generally safe
+	const envAnalysis = gasEmissionAnalysis.analyzeEnvironmentalConditions(temperature, humidity);
+	
 	let status = 'safe';
-	if (ratio < 0.45) status = 'unsafe';
-	else if (ratio < 0.6) status = 'caution';
-
-	const probability = status === 'unsafe' ? 85 : (status === 'caution' ? 55 : 20);
-	const confidence = 85;
-	return { status, probability, confidence };
+	let probability = 20; // Base safe probability for low gas levels
+	let confidence = 90;
+	
+	// Apply environmental adjustments based on baseline conditions
+	if (envAnalysis.overallRisk === 'high') {
+		probability += 20; // Minor increase for high environmental risk
+		status = 'caution';
+	} else if (envAnalysis.overallRisk === 'medium') {
+		probability += 10; // Very minor increase for medium environmental risk
+	}
+	
+	// Cap probability at 40% for low gas levels (since gas is the primary indicator)
+	probability = Math.min(probability, 40);
+	
+	return {
+		status: status,
+		probability: probability,
+		confidence: confidence,
+		recommendation: gasAnalysis.recommendation,
+		gasThreshold: gasAnalysis.threshold
+	};
 }
 
 // ML training-data based assessment: classify by nearest centroid from historical labels

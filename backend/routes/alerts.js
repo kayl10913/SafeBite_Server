@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Auth = require('../config/auth');
 const db = require('../config/database');
+const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
 
 // POST /api/alerts - Create a new alert
 router.post('/', Auth.authenticateToken, async (req, res) => {
@@ -255,6 +256,62 @@ router.delete('/:id', Auth.authenticateToken, async (req, res) => {
     } catch (error) {
         console.error('Error deleting alert:', error);
         res.status(500).json({ success: false, error: 'Database error deleting alert.' });
+    }
+});
+
+// GET /api/alerts/gas-analysis/:gasLevel - Analyze gas emission level
+router.get('/gas-analysis/:gasLevel', Auth.authenticateToken, async (req, res) => {
+    try {
+        const gasLevel = parseFloat(req.params.gasLevel);
+        
+        if (isNaN(gasLevel)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid gas level. Must be a number.'
+            });
+        }
+
+        const analysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(gasLevel);
+        const thresholds = gasEmissionAnalysis.getGasEmissionThresholds();
+        
+        res.json({
+            success: true,
+            data: {
+                gasLevel: gasLevel,
+                analysis: analysis,
+                thresholds: thresholds,
+                requiresAttention: gasEmissionAnalysis.requiresImmediateAttention(gasLevel),
+                alertLevel: gasEmissionAnalysis.getAlertLevel(gasLevel),
+                recommendedAction: gasEmissionAnalysis.getRecommendedAction(gasLevel)
+            }
+        });
+    } catch (error) {
+        console.error('Error analyzing gas emission:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error analyzing gas emission level.'
+        });
+    }
+});
+
+// GET /api/alerts/gas-thresholds - Get gas emission thresholds
+router.get('/gas-thresholds', Auth.authenticateToken, async (req, res) => {
+    try {
+        const thresholds = gasEmissionAnalysis.getGasEmissionThresholds();
+        
+        res.json({
+            success: true,
+            data: {
+                thresholds: thresholds,
+                description: 'Gas Emission Thresholds & Recommendations for food spoilage detection'
+            }
+        });
+    } catch (error) {
+        console.error('Error getting gas thresholds:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error retrieving gas emission thresholds.'
+        });
     }
 });
 

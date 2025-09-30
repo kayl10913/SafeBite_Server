@@ -4,6 +4,7 @@ const Auth = require('../config/auth');
 const db = require('../config/database');
 const geminiConfig = require('../config/gemini');
 const { generateContent } = require('../utils/geminiClient');
+const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
 
 // AI food analysis endpoint
 router.post('/analyze', Auth.authenticateToken, async (req, res) => {
@@ -250,45 +251,58 @@ async function analyzeFoodSafety(foodName, temperature, humidity, gasLevel, stor
     let result = 'SAFE';
     let recommendations = [];
 
-    // Temperature analysis
-    if (temperature > 30) {
-        safetyScore -= 40;
-        result = 'UNSAFE';
-        recommendations.push('Temperature is too high. Move food to cooler storage immediately.');
-    } else if (temperature > 25) {
-        safetyScore -= 20;
-        result = 'CAUTION';
-        recommendations.push('Temperature is elevated. Consider moving to cooler storage.');
+    // Environmental analysis using baseline conditions
+    const envAnalysis = gasEmissionAnalysis.analyzeEnvironmentalConditions(temperature, humidity);
+    
+    // Temperature analysis based on baseline (27.5°C)
+    if (envAnalysis.tempRisk === 'high') {
+        safetyScore -= 30;
+        if (result === 'SAFE') result = 'CAUTION';
+        recommendations.push('Temperature is significantly above normal for your location. Consider cooler storage.');
+    } else if (envAnalysis.tempRisk === 'medium') {
+        safetyScore -= 15;
+        if (result === 'SAFE') result = 'CAUTION';
+        recommendations.push('Temperature is slightly above normal for your location. Monitor closely.');
     } else if (temperature < 0) {
         safetyScore -= 10;
         result = 'CAUTION';
         recommendations.push('Temperature is very low. Some foods may freeze and lose quality.');
     }
 
-    // Humidity analysis
-    if (humidity > 85) {
+    // Humidity analysis based on baseline (73.8%)
+    if (envAnalysis.humidityRisk === 'high') {
         safetyScore -= 25;
         if (result === 'SAFE') result = 'CAUTION';
-        recommendations.push('Humidity is very high. This can promote bacterial growth.');
-    } else if (humidity > 70) {
-        safetyScore -= 15;
+        recommendations.push('Humidity is significantly above normal for your location. This can promote bacterial growth.');
+    } else if (envAnalysis.humidityRisk === 'medium') {
+        safetyScore -= 10;
         if (result === 'SAFE') result = 'CAUTION';
-        recommendations.push('Humidity is elevated. Monitor food condition closely.');
+        recommendations.push('Humidity is slightly above normal for your location. Monitor food condition closely.');
     }
 
-    // Gas level analysis (indicating spoilage)
-    if (gasLevel > 800) {
+    // Gas level analysis using centralized gas emission analysis
+    const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(gasLevel);
+    
+    if (gasAnalysis.riskLevel === 'high') {
+        // High Risk (251+ ppm)
         safetyScore -= 50;
         result = 'UNSAFE';
-        recommendations.push('High gas levels detected. Food may be spoiled. Discard immediately.');
-    } else if (gasLevel > 500) {
+        recommendations.push(gasAnalysis.recommendation);
+    } else if (gasAnalysis.riskLevel === 'medium') {
+        // Medium Risk (121-250 ppm)
         safetyScore -= 30;
         if (result === 'SAFE') result = 'CAUTION';
-        recommendations.push('Elevated gas levels. Food may be starting to spoil.');
-    } else if (gasLevel > 300) {
-        safetyScore -= 15;
-        if (result === 'SAFE') result = 'CAUTION';
-        recommendations.push('Moderate gas levels. Monitor food condition.');
+        recommendations.push(gasAnalysis.recommendation);
+    } else if (gasAnalysis.riskLevel === 'low') {
+        // Low Risk (0-120)
+        if (gasLevel > 80) {
+            safetyScore -= 10;
+            if (result === 'SAFE') result = 'CAUTION';
+        }
+        recommendations.push(gasAnalysis.recommendation);
+    } else {
+        // Invalid gas level
+        recommendations.push(gasAnalysis.recommendation);
     }
 
     // Storage time analysis
@@ -337,10 +351,15 @@ async function analyzeFoodSafety(foodName, temperature, humidity, gasLevel, stor
         safety_score: safetyScore,
         recommendations: recommendations,
         analysis_details: {
-            temperature_impact: temperature > 25 ? 'High' : temperature > 20 ? 'Moderate' : 'Low',
-            humidity_impact: humidity > 80 ? 'High' : humidity > 60 ? 'Moderate' : 'Low',
-            gas_impact: gasLevel > 500 ? 'High' : gasLevel > 300 ? 'Moderate' : 'Low',
-            storage_impact: storageTime && parseInt(storageTime) > 24 ? 'High' : 'Low'
+            environmental: envAnalysis,
+            temperature_impact: envAnalysis.tempRisk,
+            humidity_impact: envAnalysis.humidityRisk,
+            gas_impact: gasAnalysis.riskLevel,
+            storage_impact: storageTime && parseInt(storageTime) > 24 ? 'High' : 'Low',
+            baseline_conditions: {
+                temperature: envAnalysis.baselineTemp,
+                humidity: envAnalysis.baselineHumidity
+            }
         }
     };
 }
@@ -440,6 +459,8 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
         const systemInstruction = 'You are an AI food spoilage risk analyst for a sensor-driven monitoring system. '
             + 'Given food type and current sensor readings (temperature in °C, humidity in %, and gas level from a VOC sensor), '
             + 'assess spoilage risk and return a concise JSON object only. '
+            + 'IMPORTANT: The baseline environmental conditions for this location are: Temperature 27-28°C, Humidity 73.8% annually. '
+            + 'Consider these baseline values when assessing risk - temperatures and humidity near these values are normal for this location. '
             + 'Use food-safety knowledge and typical thresholds for different food categories. '
             + 'If uncertain, make a best-effort estimate based on comparable foods. Keep reasoning concise.';
 
@@ -459,6 +480,10 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
             `Temperature (°C): ${temp}`,
             `Humidity (%): ${humidity}`,
             `Gas Level: ${gas}`,
+            '',
+            `Baseline Environmental Conditions for this location:`,
+            `- Normal Temperature: 27-28°C`,
+            `- Normal Humidity: 73.8% annually`,
             '',
             'Return ONLY valid JSON matching this structure (no markdown, no extra text):',
             JSON.stringify(schema, null, 2)
