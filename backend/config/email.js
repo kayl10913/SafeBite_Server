@@ -231,6 +231,91 @@ class EmailService {
             return { success: false, message: 'Failed to send welcome email' };
         }
     }
+
+    async sendContactFormEmail(contactData) {
+        try {
+            if (!this.transporter) {
+                return { success: true, message: 'Contact form email logged to console (development mode)' };
+            }
+
+            const mailOptions = {
+                from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+                to: 'dinewatchph@gmail.com', // Your business email
+                subject: `New Contact Form Message from ${contactData.name}`,
+                html: `
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                        <div style="text-align: center; margin-bottom: 30px;">
+                            <h1 style="color: #2c3e50; margin: 0;">SafeBite</h1>
+                            <p style="color: #7f8c8d; margin: 5px 0;">New Contact Form Message</p>
+                        </div>
+                        
+                        <div style="background-color: #f8f9fa; padding: 30px; border-radius: 10px; margin-bottom: 20px;">
+                            <h2 style="color: #2c3e50; margin-top: 0;">Contact Details</h2>
+                            
+                            <div style="margin-bottom: 20px;">
+                                <strong style="color: #2c3e50;">Name:</strong>
+                                <p style="color: #34495e; margin: 5px 0; padding: 10px; background-color: white; border-radius: 5px;">
+                                    ${contactData.name}
+                                </p>
+                            </div>
+                            
+                            <div style="margin-bottom: 20px;">
+                                <strong style="color: #2c3e50;">Email:</strong>
+                                <p style="color: #34495e; margin: 5px 0; padding: 10px; background-color: white; border-radius: 5px;">
+                                    <a href="mailto:${contactData.email}" style="color: #3498db; text-decoration: none;">
+                                        ${contactData.email}
+                                    </a>
+                                </p>
+                            </div>
+                            
+                            <div style="margin-bottom: 20px;">
+                                <strong style="color: #2c3e50;">Message:</strong>
+                                <div style="color: #34495e; margin: 5px 0; padding: 15px; background-color: white; border-radius: 5px; line-height: 1.6; white-space: pre-wrap;">
+                                    ${contactData.message}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div style="text-align: center; color: #7f8c8d; font-size: 12px;">
+                            <p>This message was sent from the SafeBite contact form.</p>
+                            <p>Reply directly to this email to respond to ${contactData.name}.</p>
+                            <p>&copy; 2024 SafeBite. All rights reserved.</p>
+                        </div>
+                    </div>
+                `,
+                text: `
+                    SafeBite - New Contact Form Message
+                    
+                    Name: ${contactData.name}
+                    Email: ${contactData.email}
+                    
+                    Message:
+                    ${contactData.message}
+                    
+                    ---
+                    This message was sent from the SafeBite contact form.
+                    Reply directly to this email to respond to ${contactData.name}.
+                    © 2024 SafeBite. All rights reserved.
+                `,
+                replyTo: contactData.email // Allow direct reply to the sender
+            };
+
+            const result = await this.transporter.sendMail(mailOptions);
+            
+            return { 
+                success: true, 
+                message: 'Contact form email sent successfully',
+                messageId: result.messageId 
+            };
+
+        } catch (error) {
+            return { 
+                success: false, 
+                message: 'Failed to send contact form email',
+                error: error.message 
+            };
+        }
+    }
 }
 
 module.exports = new EmailService();
