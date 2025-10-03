@@ -1333,8 +1333,22 @@ router.get('/detailed-spoilage-report', Auth.authenticateToken, async (req, res)
         let queryParams = [userId];
 
         if (startDate && endDate) {
-            whereClause += ' AND DATE(mp.created_at) BETWEEN ? AND ?';
-            queryParams.push(startDate, endDate);
+            // For daily reports (same start and end date), use DATE() comparison
+            if (startDate === endDate) {
+                whereClause += ' AND DATE(mp.created_at) = ?';
+                queryParams.push(startDate);
+                console.log('🔍 Backend Daily Report Debug:');
+                console.log('  Daily Date:', startDate);
+                console.log('  WHERE clause:', whereClause);
+                console.log('  Query params:', queryParams);
+            } else {
+                // For date ranges, use BETWEEN
+                whereClause += ' AND DATE(mp.created_at) BETWEEN ? AND ?';
+                queryParams.push(startDate, endDate);
+                console.log('🔍 Backend Date Range Debug:');
+                console.log('  Start Date:', startDate);
+                console.log('  End Date:', endDate);
+            }
         }
 
         if (foodCategory && foodCategory !== 'all') {
@@ -1389,6 +1403,51 @@ router.get('/detailed-spoilage-report', Auth.authenticateToken, async (req, res)
 
         const result = await db.query(query, [...queryParams, limit, offset]);
         
+        // Debug logging for daily reports - show actual status values and dates
+        console.log('🔍 Backend Daily Report Debug:');
+        console.log('  Date filter:', startDate === endDate ? `Daily: ${startDate}` : `Range: ${startDate} to ${endDate}`);
+        console.log('  Total records returned:', result.length);
+        
+        if (result.length > 0) {
+            result.forEach((item, index) => {
+                if (index < 5) { // Show first 5 items
+                    console.log(`  Item ${index + 1}:`, {
+                        foodId: item['FOOD ID'],
+                        foodItem: item['FOOD ITEM'],
+                        status: item['STATUS'],
+                        createdAt: item['CREATED AT'],
+                        riskScore: item['RISK SCORE']
+                    });
+                }
+            });
+        } else {
+            console.log('  No records found - checking all records without date filter...');
+            
+            // Quick check to see what records exist without date filter
+            const checkQuery = `
+                SELECT 
+                    mp.prediction_id,
+                    mp.food_name,
+                    mp.spoilage_status,
+                    DATE(mp.created_at) as date_only,
+                    mp.created_at
+                FROM ml_predictions mp
+                WHERE mp.user_id = ?
+                ORDER BY mp.created_at DESC
+                LIMIT 10
+            `;
+            
+            try {
+                const checkResult = await db.query(checkQuery, [userId]);
+                console.log('  Available records (last 10):');
+                checkResult.forEach((record, i) => {
+                    console.log(`    ${i + 1}. ${record.food_name} - ${record.spoilage_status} - ${record.date_only}`);
+                });
+            } catch (err) {
+                console.log('  Error checking records:', err.message);
+            }
+        }
+        
         // Get total count for pagination
         const countQuery = `
             SELECT COUNT(*) as total 
@@ -1437,6 +1496,126 @@ router.get('/detailed-spoilage-report', Auth.authenticateToken, async (req, res)
         res.status(500).json({ 
             error: 'Internal server error',
             details: error.message 
+        });
+    }
+});
+
+// Get latest scan result for dashboard
+router.get('/latest-scan-result', Auth.authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.user_id;
+        
+        // Get the most recent ML prediction for the user
+        const query = `
+            SELECT 
+                mp.prediction_id,
+                mp.food_name,
+                mp.food_category,
+                mp.temperature,
+                mp.humidity,
+                mp.gas_level,
+                mp.spoilage_probability,
+                mp.spoilage_status,
+                mp.confidence_score,
+                mp.recommendations,
+                mp.created_at,
+                fi.expiration_date
+            FROM ml_predictions mp
+            LEFT JOIN food_items fi ON mp.food_id = fi.food_id AND mp.user_id = fi.user_id
+            WHERE mp.user_id = ?
+            ORDER BY mp.created_at DESC
+            LIMIT 1
+        `;
+        
+        const result = await db.query(query, [userId]);
+        
+        if (result && result.length > 0) {
+            const scanData = result[0];
+            
+            // Parse recommendations if it's JSON
+            let recommendations = [];
+            if (scanData.recommendations) {
+                try {
+                    recommendations = JSON.parse(scanData.recommendations);
+                } catch (e) {
+                    recommendations = [scanData.recommendations];
+                }
+            }
+            
+            // Calculate expiry status
+            let expiryStatus = 'Unknown';
+            let daysLeft = 0;
+            if (scanData.expiration_date) {
+                const today = new Date();
+                const expiryDate = new Date(scanData.expiration_date);
+                const diffTime = expiryDate - today;
+                daysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                
+                if (daysLeft < 0) {
+                    expiryStatus = 'Expired';
+                } else if (daysLeft === 0) {
+                    expiryStatus = 'Expires Today';
+                } else if (daysLeft <= 3) {
+                    expiryStatus = 'Expires Soon';
+                } else {
+                    expiryStatus = 'Good';
+                }
+            }
+            
+            // Map spoilage status to display format
+            let status = 'Unknown';
+            let statusClass = 'unknown';
+            switch (scanData.spoilage_status) {
+                case 'safe':
+                    status = 'Safe';
+                    statusClass = 'safe';
+                    break;
+                case 'caution':
+                    status = 'At Risk';
+                    statusClass = 'warning';
+                    break;
+                case 'unsafe':
+                    status = 'Spoiled';
+                    statusClass = 'danger';
+                    break;
+            }
+            
+            res.status(200).json({
+                success: true,
+                data: {
+                    id: scanData.prediction_id,
+                    name: scanData.food_name,
+                    category: scanData.food_category,
+                    status: status,
+                    statusClass: statusClass,
+                    riskScore: scanData.spoilage_probability,
+                    confidenceScore: scanData.confidence_score,
+                    sensors: {
+                        temperature: `${scanData.temperature}°C`,
+                        humidity: `${scanData.humidity}%`,
+                        gas: `${scanData.gas_level} ppm`
+                    },
+                    expiryDate: scanData.expiration_date,
+                    expiryStatus: expiryStatus,
+                    daysLeft: daysLeft,
+                    recommendations: recommendations,
+                    createdAt: scanData.created_at
+                }
+            });
+        } else {
+            res.status(200).json({
+                success: true,
+                data: null,
+                message: 'No scan results found'
+            });
+        }
+        
+    } catch (error) {
+        console.error('Get latest scan result error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error',
+            details: error.message
         });
     }
 });

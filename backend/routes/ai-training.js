@@ -170,18 +170,28 @@ router.post('/training-data', Auth.authenticateToken, async (req, res) => {
         );
         console.log('Training data inserted successfully with ID:', result.insertId);
 
-        // Create alert for new training data
+        // Create alert for new training data - ONLY for caution/unsafe statuses
         try {
-            await db.query(
-                `INSERT INTO alerts (user_id, message, alert_level, alert_type) 
-                VALUES (?, ?, ?, ?)`,
-                [
-                    user_id,
-                    `AI analyzed ${food_name} and created training data (${aiAnalysis.spoilage_status})`,
-                    'Medium',
-                    'system'
-                ]
-            );
+            const spoilageStatus = aiAnalysis.spoilage_status?.toLowerCase();
+            console.log('🚨 AI Training Alert Check:');
+            console.log('  Spoilage Status:', spoilageStatus);
+            console.log('  Should Create Alert:', spoilageStatus && spoilageStatus !== 'safe' && spoilageStatus !== 'fresh');
+            
+            if (spoilageStatus && spoilageStatus !== 'safe' && spoilageStatus !== 'fresh') {
+                await db.query(
+                    `INSERT INTO alerts (user_id, message, alert_level, alert_type) 
+                    VALUES (?, ?, ?, ?)`,
+                    [
+                        user_id,
+                        `AI analyzed ${food_name} and created training data (${aiAnalysis.spoilage_status})`,
+                        spoilageStatus === 'unsafe' || spoilageStatus === 'spoiled' ? 'High' : 'Medium',
+                        'system'
+                    ]
+                );
+                console.log('✅ Alert created for AI training:', aiAnalysis.spoilage_status);
+            } else {
+                console.log('✅ Skipping alert creation - food status is safe/fresh');
+            }
         } catch (alertError) {
             console.warn('Could not create alert:', alertError);
             // Don't fail the whole process if alert creation fails

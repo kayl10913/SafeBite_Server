@@ -5,8 +5,8 @@
  * for food spoilage detection across the SafeBite system.
  * 
  * Baseline Environmental Conditions:
- * - Base Temperature: 27-28°C
- * - Base Humidity: 71% monthly, 85% monthly, 73.8% annually
+ * - Base Temperature: 22-26°C (room temperature)
+ * - Base Humidity: 40-60% (normal range)
  * 
  * Gas Emission Thresholds & Recommendations:
  * - Low Risk (0–120): Fresh/Safe
@@ -153,8 +153,8 @@ function getRecommendedAction(gasLevel) {
  */
 function analyzeEnvironmentalConditions(temperature, humidity) {
     // Baseline environmental conditions
-    const baselineTemp = 27.5; // Average of 27-28°C
-    const baselineHumidity = 73.8; // Annual average
+    const baselineTemp = 24; // Average of 22-26°C (room temperature)
+    const baselineHumidity = 50; // Average of 40-60% (normal range)
     
     const tempDeviation = temperature - baselineTemp;
     const humidityDeviation = humidity - baselineHumidity;
@@ -163,22 +163,22 @@ function analyzeEnvironmentalConditions(temperature, humidity) {
     let humidityRisk = 'normal';
     let overallRisk = 'normal';
     
-    // Temperature analysis
-    if (temperature > baselineTemp + 5) {
-        tempRisk = 'high';
-    } else if (temperature > baselineTemp + 2) {
-        tempRisk = 'medium';
-    } else if (temperature < baselineTemp - 5) {
-        tempRisk = 'low'; // Cooler than baseline
+    // Temperature analysis (room temperature 22-26°C)
+    if (temperature > 30) {
+        tempRisk = 'high';   // Significantly above room temperature
+    } else if (temperature > 26) {
+        tempRisk = 'medium'; // Above room temperature but not extreme
+    } else if (temperature < 22) {
+        tempRisk = 'low';    // Below room temperature
     }
     
-    // Humidity analysis
-    if (humidity > baselineHumidity + 15) {
-        humidityRisk = 'high';
-    } else if (humidity > baselineHumidity + 8) {
-        humidityRisk = 'medium';
-    } else if (humidity < baselineHumidity - 15) {
-        humidityRisk = 'low'; // Drier than baseline
+    // Humidity analysis (normal range 40-60%)
+    if (humidity > 80) {
+        humidityRisk = 'high';   // Very high humidity
+    } else if (humidity > 60) {
+        humidityRisk = 'medium'; // Above normal range but manageable
+    } else if (humidity < 40) {
+        humidityRisk = 'low';    // Below normal range
     }
     
     // Overall environmental risk

@@ -254,15 +254,16 @@ async function analyzeFoodSafety(foodName, temperature, humidity, gasLevel, stor
     // Environmental analysis using baseline conditions
     const envAnalysis = gasEmissionAnalysis.analyzeEnvironmentalConditions(temperature, humidity);
     
-    // Temperature analysis based on baseline (27.5°C)
+    // Temperature analysis based on baseline (24°C from 22-26°C range)
     if (envAnalysis.tempRisk === 'high') {
-        safetyScore -= 30;
-        if (result === 'SAFE') result = 'CAUTION';
-        recommendations.push('Temperature is significantly above normal for your location. Consider cooler storage.');
+        // For extremely high temperatures (>30°C), this should be UNSAFE
+        safetyScore -= 60; // Increased penalty for high temperature risk
+        result = 'UNSAFE';
+        recommendations.push('Temperature is dangerously high for food storage. Food spoilage risk is very high. Refrigerate immediately or discard.');
     } else if (envAnalysis.tempRisk === 'medium') {
-        safetyScore -= 15;
+        safetyScore -= 25; // Increased penalty for medium temperature risk
         if (result === 'SAFE') result = 'CAUTION';
-        recommendations.push('Temperature is slightly above normal for your location. Monitor closely.');
+        recommendations.push('Temperature is above safe range (26°C). Monitor closely and consider cooler storage.');
     } else if (temperature < 0) {
         safetyScore -= 10;
         result = 'CAUTION';
@@ -319,22 +320,7 @@ async function analyzeFoodSafety(foodName, temperature, humidity, gasLevel, stor
         }
     }
 
-    // Food type specific recommendations
-    if (foodType) {
-        if (foodType.type_name === 'Dairy' && temperature > 8) {
-            safetyScore -= 25;
-            if (result === 'SAFE') result = 'CAUTION';
-            recommendations.push('Dairy products should be stored below 8°C.');
-        } else if (foodType.type_name === 'Meat' && temperature > 4) {
-            safetyScore -= 30;
-            if (result === 'SAFE') result = 'CAUTION';
-            recommendations.push('Raw meat should be stored below 4°C.');
-        } else if (foodType.type_name === 'Seafood' && temperature > 2) {
-            safetyScore -= 35;
-            if (result === 'SAFE') result = 'CAUTION';
-            recommendations.push('Seafood should be stored below 2°C.');
-        }
-    }
+    // Use standardized environmental thresholds for all food types
 
     // Ensure safety score doesn't go below 0
     safetyScore = Math.max(0, safetyScore);
@@ -429,38 +415,13 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
             });
         }
 
-        // Low-cost fast-path: simple heuristic to avoid AI calls when obvious
-        if (geminiConfig.lowCostMode) {
-            const scoreTemp = temp > 30 ? 50 : temp > 25 ? 30 : temp > 10 ? 10 : 0;
-            const scoreHumidity = humidity > 85 ? 25 : humidity > 70 ? 15 : 0;
-            const scoreGas = gas > 800 ? 50 : gas > 500 ? 30 : gas > 300 ? 15 : 0;
-            const riskScore = Math.min(100, scoreTemp + scoreHumidity + scoreGas);
-            const riskLevel = riskScore >= 70 ? 'High' : riskScore >= 40 ? 'Medium' : 'Low';
-            const analysis = {
-                riskLevel,
-                riskScore,
-                summary: `Heuristic evaluation for ${foodType.trim()} based on sensor readings.`,
-                keyFactors: [
-                    `Temperature: ${temp}°C`,
-                    `Humidity: ${humidity}%`,
-                    `Gas: ${gas}`
-                ],
-                recommendations: [
-                    'Keep below 4°C if perishable',
-                    'Reduce humidity',
-                    'Inspect for spoilage odor'
-                ],
-                estimatedShelfLifeHours: riskLevel === 'High' ? 6 : riskLevel === 'Medium' ? 24 : 48,
-                notes: 'Generated without AI to minimize cost'
-            };
-            return res.json({ analysis, _mode: 'heuristic' });
-        }
+        // Use proper analysis with updated thresholds instead of hardcoded heuristics
 
         const systemInstruction = 'You are an AI food spoilage risk analyst for a sensor-driven monitoring system. '
             + 'Given food type and current sensor readings (temperature in °C, humidity in %, and gas level from a VOC sensor), '
             + 'assess spoilage risk and return a concise JSON object only. '
-            + 'IMPORTANT: The baseline environmental conditions for this location are: Temperature 27-28°C, Humidity 73.8% annually. '
-            + 'Consider these baseline values when assessing risk - temperatures and humidity near these values are normal for this location. '
+            + 'IMPORTANT: The baseline environmental conditions for this location are: Temperature 22-26°C (room temperature), Humidity 40-60% (normal). '
+            + 'Consider these baseline values when assessing risk - temperatures and humidity within these ranges are normal for this location. '
             + 'Use food-safety knowledge and typical thresholds for different food categories. '
             + 'If uncertain, make a best-effort estimate based on comparable foods. Keep reasoning concise.';
 
@@ -482,8 +443,8 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
             `Gas Level: ${gas}`,
             '',
             `Baseline Environmental Conditions for this location:`,
-            `- Normal Temperature: 27-28°C`,
-            `- Normal Humidity: 73.8% annually`,
+            `- Normal Temperature: 22-26°C (room temperature)`,
+            `- Normal Humidity: 40-60% (normal range)`,
             '',
             'Return ONLY valid JSON matching this structure (no markdown, no extra text):',
             JSON.stringify(schema, null, 2)
@@ -543,6 +504,59 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
                 estimatedShelfLifeHours: 24,
                 notes: 'Fallback generated by server due to invalid AI JSON.'
             };
+        }
+
+        // Validate AI result against our safety analysis for consistency
+        try {
+            const safetyCheck = await analyzeFoodSafety(foodType, temp, humidity, gas, null, null);
+            console.log('🔍 AI Analysis Validation:');
+            console.log('  Gemini AI Result:', analysis.riskLevel, '(score:', analysis.riskScore, ')');
+            console.log('  Safety Check Result:', safetyCheck.result, '(score:', safetyCheck.safety_score, ')');
+            
+            // If there's a significant mismatch, use the safety check result
+            const aiRiskScore = analysis.riskScore || 50;
+            const safetyRiskScore = 100 - (safetyCheck.safety_score || 50); // Convert safety score to risk score
+            
+            console.log('🔍 Score Details:');
+            console.log('  Original Safety Score:', safetyCheck.safety_score);
+            console.log('  Converted Risk Score:', safetyRiskScore);
+            
+            console.log('🔍 Validation Calculation:');
+            console.log('  AI Risk Score:', aiRiskScore);
+            console.log('  Safety Risk Score:', safetyRiskScore);
+            console.log('  Difference:', Math.abs(aiRiskScore - safetyRiskScore));
+            
+            // Lower threshold to 20 for better validation, and also check for result mismatch
+            const scoreDifference = Math.abs(aiRiskScore - safetyRiskScore);
+            const resultMismatch = (analysis.riskLevel === 'High' && safetyCheck.result !== 'UNSAFE') ||
+                                 (analysis.riskLevel === 'Low' && safetyCheck.result === 'UNSAFE');
+            
+            if (scoreDifference > 20 || resultMismatch) {
+                console.log('⚠️ Significant mismatch detected, using safety analysis result');
+                
+                // Map safety result to risk level
+                let correctedRiskLevel = 'Medium';
+                if (safetyCheck.result === 'UNSAFE') {
+                    correctedRiskLevel = 'High';
+                } else if (safetyCheck.result === 'CAUTION') {
+                    correctedRiskLevel = 'Medium';
+                } else {
+                    correctedRiskLevel = 'Low';
+                }
+                
+                console.log('🔧 AI Validation Correction:');
+                console.log('  Original AI Risk Level:', analysis.riskLevel);
+                console.log('  Safety Check Result:', safetyCheck.result);
+                console.log('  Corrected Risk Level:', correctedRiskLevel);
+                console.log('  Original AI Risk Score:', analysis.riskScore);
+                console.log('  Corrected Risk Score:', safetyRiskScore);
+                
+                analysis.riskLevel = correctedRiskLevel;
+                analysis.riskScore = safetyRiskScore;
+                analysis.notes = (analysis.notes || '') + ' (Validated against safety analysis)';
+            }
+        } catch (validationError) {
+            console.warn('Failed to validate AI result:', validationError.message);
         }
 
         // Log the analysis request for activity tracking

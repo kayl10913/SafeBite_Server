@@ -4,34 +4,9 @@ const Auth = require('../config/auth');
 const db = require('../config/database');
 const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
 
-// SmartSense spoilage assessment (mirrors frontend logic at a high level)
+// SmartSense spoilage assessment using standardized thresholds
 function assessSmartSenseStatus(foodName, category, temperature, humidity, gasLevel) {
-	const key = (foodName || '').toLowerCase().trim();
-	const basis = {
-		'banana': {
-			normal: { temperature: 22, humidity: 70, gas: 60 },
-			spoiled: { temperature: 26, humidity: 80, gas: 300 }
-		},
-		'carrot': {
-			normal: { temperature: 10, humidity: 70, gas: 40 },
-			spoiled: { temperature: 18, humidity: 85, gas: 250 }
-		},
-		'taro root': {
-			normal: { temperature: 15, humidity: 75, gas: 45 },
-			spoiled: { temperature: 24, humidity: 85, gas: 280 }
-		}
-	};
-
-	if (!basis[key]) {
-		return null; // unknown food, let client values pass through
-	}
-
-	const b = basis[key];
-
-	// Hard safety rules: exceed spoiled thresholds => unsafe
-	if (gasLevel >= b.spoiled.gas || humidity >= b.spoiled.humidity) {
-		return { status: 'unsafe', probability: 95, confidence: 90 };
-	}
+	// Use standardized thresholds instead of hardcoded food-specific values
 
 	// Apply gas emission thresholds for all foods - PRIORITY OVER OTHER FACTORS
 	const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(gasLevel);
@@ -307,8 +282,18 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
             spoilage_probability,
             spoilage_status,
             confidence_score,
-            recommendations
+            recommendations,
+            ai_original_status,
+            display_override_status
         } = req.body;
+        
+        // Debug logging for AI vs Override comparison
+        if (ai_original_status && display_override_status && ai_original_status !== display_override_status) {
+            console.log('🔍 AI vs Override Status Comparison:');
+            console.log('  AI Original Status:', ai_original_status);
+            console.log('  Display Override Status:', display_override_status);
+            console.log('  Using for ML Prediction:', spoilage_status);
+        }
 
         // Validate required fields
         if (!food_name || spoilage_probability === undefined || !spoilage_status) {
@@ -423,12 +408,44 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
             console.warn('Could not fetch model (active or latest) for ml-workflow predict:', e.message);
         }
 
-        // Primary: derive status from ML training table; Fallback: SmartSense table; Else: client-provided
+        // Primary: Use AI analysis result for consistency; Fallback: ML training data; Last resort: SmartSense assessment
+        console.log('🔍 ML Workflow Status Determination:');
+        console.log('  AI Analysis Status (spoilage_status):', spoilage_status);
+        console.log('  AI Original Status:', ai_original_status);
+        console.log('  Display Override Status:', display_override_status);
+        console.log('  Sensor Data for Analysis:', { 
+            temperature: finalTemperature, 
+            humidity: finalHumidity, 
+            gas_level: finalGasLevel 
+        });
+        console.log('  Temperature Check: 61.10°C > 26°C threshold?', parseFloat(finalTemperature) > 26);
+        
         const trained = await assessFromTrainingData(db, food_name, food_category, parseFloat(finalTemperature), parseFloat(finalHumidity), parseFloat(finalGasLevel));
-        const smart = trained ? null : assessSmartSenseStatus(food_name, food_category, parseFloat(finalTemperature), parseFloat(finalHumidity), parseFloat(finalGasLevel));
-        const finalStatus = trained ? trained.status : (smart ? smart.status : spoilage_status);
-        const finalProbability = trained ? trained.probability : (smart ? smart.probability : spoilage_probability);
-        const finalConfidence = trained ? Math.max(trained.confidence, confidence_score || 85.0) : (smart ? Math.max(smart.confidence, confidence_score || 85.0) : (confidence_score || 85.0));
+        const smart = assessSmartSenseStatus(food_name, food_category, parseFloat(finalTemperature), parseFloat(finalHumidity), parseFloat(finalGasLevel));
+        
+        console.log('  Training Data Assessment:', trained ? trained.status : 'None');
+        console.log('  SmartSense Assessment:', smart ? smart.status : 'None');
+        
+        // Prioritize AI analysis result, then training data, then SmartSense assessment
+        // Only use 'safe' as absolute last resort if ALL methods fail
+        const finalStatus = spoilage_status || 
+                           (trained ? trained.status : null) || 
+                           (smart ? smart.status : null) || 
+                           'safe'; // Last resort only
+        
+        const finalProbability = spoilage_probability || 
+                                 (trained ? trained.probability : null) || 
+                                 (smart ? smart.probability : null) || 
+                                 75; // Default probability
+        
+        const finalConfidence = confidence_score || 
+                               (trained ? Math.max(trained.confidence, 85.0) : null) || 
+                               (smart ? Math.max(smart.confidence, 85.0) : null) || 
+                               85.0; // Default confidence
+        
+        console.log('  Final Status Used:', finalStatus);
+        console.log('  Final Probability Used:', finalProbability);
+        console.log('  Final Confidence Used:', finalConfidence);
 
         // Insert ML prediction
         const result = await db.query(
@@ -478,6 +495,10 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
         }
 
         // Create alert if spoilage detected, include recommended_action and alert_data like SmartSense
+        console.log('🚨 ML Workflow Alert Check:');
+        console.log('  Final Status:', finalStatus);
+        console.log('  Should Create Alert:', finalStatus !== 'safe');
+        
         if (finalStatus !== 'safe') {
             try {
                 const alertLevel = finalStatus === 'unsafe' ? 'High' : 'Medium';

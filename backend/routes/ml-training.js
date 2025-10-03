@@ -162,52 +162,63 @@ router.post('/training-data', Auth.authenticateToken, async (req, res) => {
         // Log activity
         await db.query('INSERT INTO activity_logs (user_id, action) VALUES (?, ?)', [user_id, `Uploaded ML training data for ${foodName} (${food_status})`]);
 
-        // Create alert for ML training completion
-        let alertLevel = 'Low';
-        let alertMessage = '';
-        let recommendedAction = '';
+        // Create alert for ML training completion - ONLY for caution/unsafe statuses
+        console.log('🚨 ML Training Alert Check:');
+        console.log('  Food Status:', food_status);
+        console.log('  Should Create Alert:', food_status !== 'fresh' && food_status !== 'safe');
+        
+        if (food_status !== 'fresh' && food_status !== 'safe') {
+            let alertLevel = 'Medium';
+            let alertMessage = '';
+            let recommendedAction = '';
 
-        switch (food_status) {
-            case 'fresh':
-                alertLevel = 'Low';
-                alertMessage = `✅ ML Training Complete: ${foodName} marked as fresh and healthy`;
-                recommendedAction = 'Continue monitoring with regular scans';
-                break;
-            case 'spoiled':
-                alertLevel = 'Medium';
-                alertMessage = `⚠️ ML Training Complete: ${foodName} marked as spoiled - AI learned from this data`;
-                recommendedAction = 'Dispose of spoiled food and clean storage area';
-                break;
-            case 'expired':
-                alertLevel = 'High';
-                alertMessage = `❌ ML Training Complete: ${foodName} marked as expired - AI learned from this data`;
-                recommendedAction = 'Immediately dispose of expired food and check other items';
-                break;
+            switch (food_status) {
+                case 'spoiled':
+                case 'caution':
+                case 'unsafe':
+                    alertLevel = 'Medium';
+                    alertMessage = `⚠️ ML Training Complete: ${foodName} marked as ${food_status} - AI learned from this data`;
+                    recommendedAction = 'Dispose of spoiled food and clean storage area';
+                    break;
+                case 'expired':
+                    alertLevel = 'High';
+                    alertMessage = `❌ ML Training Complete: ${foodName} marked as expired - AI learned from this data`;
+                    recommendedAction = 'Immediately dispose of expired food and check other items';
+                    break;
+                default:
+                    alertLevel = 'Medium';
+                    alertMessage = `⚠️ ML Training Complete: ${foodName} marked as ${food_status} - AI learned from this data`;
+                    recommendedAction = 'Check food condition and take appropriate action';
+                    break;
+            }
+
+            // Create alert only for non-safe statuses
+            await db.query(
+                `INSERT INTO alerts 
+                (user_id, food_id, message, alert_level, alert_type, spoilage_probability, recommended_action, is_ml_generated, confidence_score, alert_data) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    user_id, 
+                    food_id, 
+                    alertMessage, 
+                    alertLevel, 
+                    'ml_prediction', 
+                    food_status === 'spoiled' ? 75 : food_status === 'expired' ? 95 : 60, 
+                    recommendedAction, 
+                    true, 
+                    85, 
+                    JSON.stringify({
+                        training_completed: true,
+                        food_status: food_status,
+                        sensor_readings: { temperature, humidity, gas_level },
+                        timestamp: new Date().toISOString()
+                    })
+                ]
+            );
+            console.log('✅ Alert created for ML training:', alertMessage);
+        } else {
+            console.log('✅ Skipping alert creation - food status is safe/fresh');
         }
-
-        // Create alert
-        await db.query(
-            `INSERT INTO alerts 
-            (user_id, food_id, message, alert_level, alert_type, spoilage_probability, recommended_action, is_ml_generated, confidence_score, alert_data) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                user_id, 
-                food_id, 
-                alertMessage, 
-                alertLevel, 
-                'ml_prediction', 
-                food_status === 'fresh' ? 10 : food_status === 'spoiled' ? 75 : 95, 
-                recommendedAction, 
-                true, 
-                85, 
-                JSON.stringify({
-                    training_completed: true,
-                    food_status: food_status,
-                    sensor_readings: { temperature, humidity, gas_level },
-                    timestamp: new Date().toISOString()
-                })
-            ]
-        );
 
         console.log('ML training data uploaded:', {
             id: result.insertId,

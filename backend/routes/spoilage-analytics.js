@@ -34,12 +34,14 @@ router.get('/summary', async (req, res) => {
             });
         }
 
-        // Query to get top 5 individual spoiled foods
+        // Query to get top 5 foods with status breakdown
         const topSpoiledFoodsQuery = `
             SELECT 
                 mp.food_name,
                 mp.food_category,
                 COUNT(*) as total_items,
+                SUM(CASE WHEN mp.spoilage_status = 'safe' THEN 1 ELSE 0 END) as safe_count,
+                SUM(CASE WHEN mp.spoilage_status = 'caution' THEN 1 ELSE 0 END) as caution_count,
                 SUM(CASE WHEN mp.spoilage_status = 'unsafe' THEN 1 ELSE 0 END) as spoiled_count,
                 ROUND(
                     (SUM(CASE WHEN mp.spoilage_status = 'unsafe' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)), 
@@ -48,17 +50,18 @@ router.get('/summary', async (req, res) => {
             FROM ml_predictions mp
             WHERE mp.user_id = ?
             GROUP BY mp.food_name, mp.food_category
-            HAVING spoiled_count > 0
-            ORDER BY spoiled_count DESC, spoilage_rate DESC
+            ORDER BY total_items DESC, spoiled_count DESC
             LIMIT 5
         `;
 
-        // Query to get spoilage summary by category
+        // Query to get status summary by category
         const categorySummaryQuery = `
             SELECT 
                 mp.food_category,
                 COUNT(DISTINCT mp.food_name) as unique_foods,
                 COUNT(*) as total_items,
+                SUM(CASE WHEN mp.spoilage_status = 'safe' THEN 1 ELSE 0 END) as safe_count,
+                SUM(CASE WHEN mp.spoilage_status = 'caution' THEN 1 ELSE 0 END) as caution_count,
                 SUM(CASE WHEN mp.spoilage_status = 'unsafe' THEN 1 ELSE 0 END) as spoiled_count,
                 ROUND(
                     (SUM(CASE WHEN mp.spoilage_status = 'unsafe' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)), 
@@ -67,7 +70,7 @@ router.get('/summary', async (req, res) => {
             FROM ml_predictions mp
             WHERE mp.user_id = ?
             GROUP BY mp.food_category
-            ORDER BY spoiled_count DESC, spoilage_rate DESC
+            ORDER BY total_items DESC, spoiled_count DESC
         `;
 
         // Execute both queries
@@ -82,7 +85,7 @@ router.get('/summary', async (req, res) => {
                 COUNT(*) as total_items,
                 SUM(CASE WHEN mp.spoilage_status = 'safe' THEN 1 ELSE 0 END) as safe_count,
                 SUM(CASE WHEN mp.spoilage_status = 'caution' THEN 1 ELSE 0 END) as caution_count,
-                SUM(CASE WHEN mp.spoilage_status = 'unsafe' THEN 1 ELSE 0 END) as unsafe_count,
+                SUM(CASE WHEN mp.spoilage_status = 'unsafe' THEN 1 ELSE 0 END) as spoiled_count,
                 SUM(CASE WHEN fi.expiration_date < CURDATE() THEN 1 ELSE 0 END) as expired_count
             FROM ml_predictions mp
             LEFT JOIN food_items fi ON mp.food_id = fi.food_id
@@ -91,13 +94,24 @@ router.get('/summary', async (req, res) => {
 
         const totals = await db.query(totalsQuery, [currentUserId]);
 
+        // Structure the response to match frontend expectations
+        const responseData = {
+            topSpoiledFoods: topSpoiledFoods,
+            categorySummary: categorySummary,
+            totals: totals[0] || { total_items: 0, safe_count: 0, caution_count: 0, spoiled_count: 0, expired_count: 0 }
+        };
+
+        // Also add stats at the root level for compatibility
+        responseData.stats = responseData.totals;
+        responseData.summary = {
+            topSpoiledFoods: topSpoiledFoods,
+            categorySummary: categorySummary,
+            totals: responseData.totals
+        };
+
         res.json({
             success: true,
-            data: {
-                topSpoiledFoods: topSpoiledFoods,
-                categorySummary: categorySummary,
-                totals: totals[0] || { total_items: 0, safe_count: 0, caution_count: 0, unsafe_count: 0, expired_count: 0 }
-            }
+            data: responseData
         });
 
     } catch (error) {

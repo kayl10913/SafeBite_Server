@@ -258,40 +258,27 @@ function calculateStats(values) {
 function getDefaultThresholds(foodCategory) {
     const defaults = {
         temperature: {
-            safe_max: 4,
-            caution_max: 7,
-            unsafe_max: 10,
-            safe_min: 0
+            safe_max: 26,      // Room temperature upper limit
+            caution_max: 28,   // Above room temperature
+            unsafe_max: 30,    // High temperature
+            safe_min: 22       // Room temperature lower limit
         },
         humidity: {
-            safe_max: 70,
-            caution_max: 80,
-            unsafe_max: 85,
-            safe_min: 40
+            safe_max: 60,      // Normal humidity upper limit
+            caution_max: 70,   // Elevated humidity
+            unsafe_max: 80,    // High humidity
+            safe_min: 40       // Normal humidity lower limit
         },
         gas_level: {
-            safe_max: 15,
-            caution_max: 30,
-            unsafe_max: 50
+            safe_max: 120,     // Low Risk (0-120 ppm)
+            caution_max: 250,  // Medium Risk (121-250 ppm)
+            unsafe_max: 500    // High Risk (251+ ppm)
         },
         confidence: 50,
-        reasoning: "Default thresholds used as fallback"
+        reasoning: "Default thresholds based on room temperature (22-26°C), normal humidity (40-60%), and gas emission levels"
     };
 
-    // Category-specific adjustments
-    if (foodCategory.toLowerCase().includes('meat') || foodCategory.toLowerCase().includes('fish')) {
-        defaults.temperature.safe_max = 2;
-        defaults.temperature.caution_max = 4;
-        defaults.temperature.unsafe_max = 7;
-    } else if (foodCategory.toLowerCase().includes('dairy')) {
-        defaults.temperature.safe_max = 4;
-        defaults.temperature.caution_max = 6;
-        defaults.temperature.unsafe_max = 8;
-    } else if (foodCategory.toLowerCase().includes('vegetable') || foodCategory.toLowerCase().includes('fruit')) {
-        defaults.humidity.safe_max = 85;
-        defaults.humidity.caution_max = 90;
-        defaults.humidity.unsafe_max = 95;
-    }
+    // Use standardized thresholds for all food categories
 
     return defaults;
 }
@@ -489,6 +476,11 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
         // Create alert for non-safe predictions to mirror SmartSense scanner structure
         try {
             const statusLower = String(prediction.spoilage_status || '').toLowerCase();
+            console.log('🚨 ML Prediction Alert Check:');
+            console.log('  Spoilage Status:', prediction.spoilage_status);
+            console.log('  Status Lower:', statusLower);
+            console.log('  Should Create Alert:', statusLower && statusLower !== 'safe' && statusLower !== 'fresh');
+            
             if (statusLower && statusLower !== 'safe' && statusLower !== 'fresh') {
                 const alertLevel = (statusLower === 'unsafe' || statusLower === 'spoiled') ? 'High' : 'Medium';
                 const recommendedAction = (statusLower === 'unsafe' || statusLower === 'spoiled')
