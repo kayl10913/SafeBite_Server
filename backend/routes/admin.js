@@ -152,33 +152,22 @@ router.get('/sensor/activity-data', Auth.authenticateToken, Auth.requireAdmin, a
 router.get('/sensor/activity-counts', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
     try {
         console.log('=== ACTIVITY COUNTS ENDPOINT CALLED ===');
-        // Get the most recent reading date to calculate relative dates
-        console.log('Executing recent date query...');
-        const recentDateQuery = await db.query(`
-            SELECT MAX(r.timestamp) as max_timestamp
+        
+        // Use current date instead of max timestamp for proper date calculations
+        const currentDate = new Date();
+        console.log('Using current date for calculations:', currentDate.toISOString().split('T')[0]);
+        
+        console.log('Executing main counts query with current date');
+        const rows = await db.query(`
+            SELECT
+              COUNT(DISTINCT CASE WHEN DATE(r.timestamp) = CURDATE() THEN CONCAT(s.user_id, '_', DATE_FORMAT(r.timestamp, '%Y-%m-%d %H:%i')) END) AS today,
+              COUNT(DISTINCT CASE WHEN r.timestamp >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) THEN CONCAT(s.user_id, '_', DATE_FORMAT(r.timestamp, '%Y-%m-%d %H:%i')) END) AS last7d,
+              COUNT(DISTINCT CASE WHEN r.timestamp >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) THEN CONCAT(s.user_id, '_', DATE_FORMAT(r.timestamp, '%Y-%m-%d %H:%i')) END) AS last30d
             FROM readings r
             JOIN sensor s ON r.sensor_id = s.sensor_id
             JOIN users u ON s.user_id = u.user_id
             WHERE u.role = 'User' AND r.value IS NOT NULL
         `);
-        console.log('Recent date query result:', recentDateQuery);
-        
-        const maxTimestamp = recentDateQuery[0]?.max_timestamp;
-        if (!maxTimestamp) {
-            return res.json({ success: true, counts: { today: 0, last7d: 0, last30d: 0 } });
-        }
-        
-        console.log('Executing main counts query with maxTimestamp:', maxTimestamp);
-        const rows = await db.query(`
-            SELECT
-              COUNT(DISTINCT CASE WHEN DATE(r.timestamp) = DATE(?) THEN CONCAT(s.user_id, '_', r.timestamp) END) AS today,
-              COUNT(DISTINCT CASE WHEN r.timestamp >= DATE_SUB(?, INTERVAL 7 DAY) THEN CONCAT(s.user_id, '_', r.timestamp) END) AS last7d,
-              COUNT(DISTINCT CASE WHEN r.timestamp >= DATE_SUB(?, INTERVAL 30 DAY) THEN CONCAT(s.user_id, '_', r.timestamp) END) AS last30d
-            FROM readings r
-            JOIN sensor s ON r.sensor_id = s.sensor_id
-            JOIN users u ON s.user_id = u.user_id
-            WHERE u.role = 'User' AND r.value IS NOT NULL
-        `, [maxTimestamp, maxTimestamp, maxTimestamp]);
         console.log('Main counts query result:', rows);
         const c = rows && rows[0] ? rows[0] : { today: 0, last7d: 0, last30d: 0 };
         const counts = { 
@@ -187,10 +176,9 @@ router.get('/sensor/activity-counts', Auth.authenticateToken, Auth.requireAdmin,
             last30d: Number(c.last30d)||0 
         };
         console.log('=== ADMIN ACTIVITY COUNTS DEBUG ===');
-        console.log('Max timestamp from DB:', maxTimestamp);
+        console.log('Current date used:', currentDate.toISOString().split('T')[0]);
         console.log('Admin activity counts query result:', c);
         console.log('Admin activity counts processed:', counts);
-        console.log('Current date:', new Date().toISOString().split('T')[0]);
         console.log('=== END DEBUG ===');
         res.json({ success: true, counts });
     } catch (error) {
