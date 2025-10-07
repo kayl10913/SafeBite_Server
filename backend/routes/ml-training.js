@@ -16,6 +16,7 @@ router.post('/add', Auth.authenticateToken, async (req, res) => {
         const actual_status = body.actual_status ?? body.actualStatus;
         const data_source = body.data_source ?? body.source;
         let quality_score = body.quality_score ?? body.dataQuality;
+        const environmental_factors = body.environmental_factors ?? body.environmentalFactors;
 
         // Basic validation
         if (!food_name || temperature == null || humidity == null || gas_level == null || !actual_status) {
@@ -41,8 +42,8 @@ router.post('/add', Auth.authenticateToken, async (req, res) => {
 
         const sql = `
             INSERT INTO ml_training_data
-            (food_name, food_category, temperature, humidity, gas_level, actual_spoilage_status, data_source, quality_score)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (food_name, food_category, temperature, humidity, gas_level, actual_spoilage_status, data_source, quality_score, environmental_factors)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         const params = [
             String(food_name).trim(),
@@ -52,7 +53,8 @@ router.post('/add', Auth.authenticateToken, async (req, res) => {
             Number(gas_level),
             statusToUse,
             sourceToUse,
-            qualityToUse
+            qualityToUse,
+            environmental_factors || null
         ];
 
         const result = await db.query(sql, params);
@@ -152,7 +154,7 @@ router.post('/training-data', Auth.authenticateToken, async (req, res) => {
             foodCategory = foodRows[0].category;
         }
 
-        const [result] = await db.query(
+        const result = await db.query(
             `INSERT INTO ml_training_data 
             (food_name, food_category, temperature, humidity, gas_level, actual_spoilage_status, data_source, environmental_factors) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -339,6 +341,128 @@ router.get('/training-stats', Auth.authenticateToken, async (req, res) => {
     }
 });
 
+// Update ML training data entry
+router.put('/update/:id', Auth.authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const body = req.body || {};
+        
+        // Accept both camelCase (frontend) and snake_case (backend/DB) keys
+        const food_name = body.food_name ?? body.foodName;
+        const food_category = body.food_category ?? body.category ?? null;
+        const temperature = body.temperature;
+        const humidity = body.humidity;
+        const gas_level = (body.gas_level != null ? body.gas_level : (body.ph != null ? body.ph : null));
+        const actual_status = body.actual_status ?? body.actualStatus;
+        const data_source = body.data_source ?? body.source;
+        let quality_score = body.quality_score ?? body.dataQuality;
+        const environmental_factors = body.environmental_factors ?? body.environmentalFactors;
+
+        // Basic validation
+        if (temperature == null || humidity == null || gas_level == null || !actual_status) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'temperature, humidity, gas_level, actual_status are required' 
+            });
+        }
+
+        const allowedStatuses = new Set(['safe','caution','unsafe']);
+        if (!allowedStatuses.has(String(actual_status).toLowerCase())) {
+            return res.status(400).json({ 
+                success: false, 
+                message: "actual_status must be one of: 'safe','caution','unsafe'" 
+            });
+        }
+
+        const allowedSources = new Set(['manual','sensor','user_feedback','expert']);
+        const sourceToUse = allowedSources.has(String(data_source || '').toLowerCase()) ? String(data_source).toLowerCase() : 'sensor';
+
+        // Normalize inputs
+        const statusToUse = String(actual_status).toLowerCase();
+        // If frontend sends percent (0-100), convert to 0-1
+        if (quality_score != null && !Number.isNaN(Number(quality_score))) {
+            const qn = Number(quality_score);
+            quality_score = qn > 1 ? qn / 100 : qn;
+        }
+        const qualityToUse = (quality_score == null || Number.isNaN(Number(quality_score))) ? 1.0 : Math.max(0, Math.min(1, Number(quality_score)));
+
+        // Check if training data exists
+        const [existingRows] = await db.query(`
+            SELECT training_id, food_name, food_category 
+            FROM ml_training_data 
+            WHERE training_id = ?
+        `, [id]);
+
+        if (existingRows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Training data not found'
+            });
+        }
+
+        const existingData = existingRows[0];
+
+        // Update the training data
+        const sql = `
+            UPDATE ml_training_data SET
+                food_name = ?,
+                food_category = ?,
+                temperature = ?,
+                humidity = ?,
+                gas_level = ?,
+                actual_spoilage_status = ?,
+                data_source = ?,
+                quality_score = ?,
+                environmental_factors = ?,
+                updated_at = NOW()
+            WHERE training_id = ?
+        `;
+        const params = [
+            food_name ? String(food_name).trim() : existingData.food_name,
+            food_category ? String(food_category).trim() : existingData.food_category,
+            Number(temperature),
+            Number(humidity),
+            Number(gas_level),
+            statusToUse,
+            sourceToUse,
+            qualityToUse,
+            environmental_factors || null,
+            id
+        ];
+
+        const result = await db.query(sql, params);
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Training data not found or no changes made'
+            });
+        }
+
+        // Activity log
+        try {
+            const actorId = req.user && req.user.user_id ? req.user.user_id : null;
+            const actionText = `Updated Training Data (ID: ${id})`;
+            await Auth.logActivity(actorId, actionText, db);
+        } catch (logErr) {
+            console.warn('ML update training activity log failed (continuing):', logErr.message);
+        }
+
+        return res.json({
+            success: true,
+            message: 'Training data updated successfully',
+            id: id
+        });
+
+    } catch (error) {
+        console.error('Error updating ML training data:', error);
+        return res.status(500).json({ 
+            success: false, 
+            message: 'Failed to update training data' 
+        });
+    }
+});
+
 // Delete ML training data entry
 router.delete('/training-data/:id', Auth.authenticateToken, async (req, res) => {
     try {
@@ -346,10 +470,10 @@ router.delete('/training-data/:id', Auth.authenticateToken, async (req, res) => 
         const user_id = req.user.user_id;
 
         // Verify ownership and delete
-        const [result] = await db.query(`
+        const result = await db.query(`
             DELETE FROM ml_training_data 
-            WHERE id = ? AND user_id = ?
-        `, [id, user_id]);
+            WHERE training_id = ?
+        `, [id]);
 
         if (result.affectedRows === 0) {
             return res.status(404).json({

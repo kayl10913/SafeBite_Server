@@ -43,9 +43,10 @@ class Database {
         try {
             const connection = await this.getConnection();
             const [rows, fields] = await connection.execute(sql, params);
-            // For INSERT operations, we need to return the full result object
+            // For INSERT/UPDATE/DELETE operations, we need to return the full result object
             // For SELECT operations, we return just the rows
-            if (sql.trim().toUpperCase().startsWith('INSERT')) {
+            const sqlType = sql.trim().toUpperCase();
+            if (sqlType.startsWith('INSERT') || sqlType.startsWith('UPDATE') || sqlType.startsWith('DELETE')) {
                 return { insertId: rows.insertId, affectedRows: rows.affectedRows };
             }
             return rows;
@@ -58,9 +59,10 @@ class Database {
                 try {
                     const connection = await this.getConnection();
                     const [rows, fields] = await connection.execute(sql, params);
-                    // For INSERT operations, we need to return the full result object
+                    // For INSERT/UPDATE/DELETE operations, we need to return the full result object
                     // For SELECT operations, we return just the rows
-                    if (sql.trim().toUpperCase().startsWith('INSERT')) {
+                    const sqlType = sql.trim().toUpperCase();
+                    if (sqlType.startsWith('INSERT') || sqlType.startsWith('UPDATE') || sqlType.startsWith('DELETE')) {
                         return { insertId: rows.insertId, affectedRows: rows.affectedRows };
                     }
                     return rows;

@@ -68,6 +68,7 @@ router.get('/test-db', async (req, res) => {
                 f.star_rating AS \`STAR RATE\`,
                 f.sentiment AS \`SENTIMENT\`,
                 f.status AS \`STATUS\`,
+                f.response_text,
                 f.created_at,
                 f.user_id,
                 CASE 
@@ -178,7 +179,6 @@ router.get('/', async (req, res) => {
                 f.star_rating AS \`STAR RATE\`,
                 f.sentiment AS \`SENTIMENT\`,
                 f.status AS \`STATUS\`,
-                f.admin_notes,
                 f.response_text,
                 f.created_at,
                 f.user_id,
@@ -329,20 +329,19 @@ router.post('/', Auth.authenticateToken, async (req, res) => {
 router.put('/:feedbackId', async (req, res) => {
     try {
         const { feedbackId } = req.params;
-        const { status, admin_notes, response_text, resolved_by } = req.body;
+        const { status, response_text, resolved_by } = req.body;
 
         const result = await db.query(`
             UPDATE feedbacks
             SET 
                 status = ?,
-                admin_notes = ?,
                 response_text = ?,
                 response_date = CASE WHEN ? IS NOT NULL THEN NOW() ELSE response_date END,
                 resolved_by = ?,
                 resolved_at = CASE WHEN ? = 'Resolved' THEN NOW() ELSE NULL END,
                 updated_at = NOW()
             WHERE feedback_id = ?
-        `, [status, admin_notes, response_text, response_text, resolved_by, status, feedbackId]);
+        `, [status, response_text, response_text, resolved_by, status, feedbackId]);
 
         if (result.affectedRows === 0) return res.status(404).json({ success: false, message: 'Feedback not found' });
 
@@ -527,6 +526,7 @@ router.get('/users/all-plain', async (req, res) => {
                 f.star_rating AS \`STAR RATE\`,
                 f.sentiment AS \`SENTIMENT\`,
                 f.status AS \`STATUS\`,
+                f.response_text,
                 DATE_FORMAT(f.created_at, '%Y-%m-%d') AS \`DATE\`
             FROM feedbacks f
             LEFT JOIN users u ON f.user_id = u.user_id
@@ -582,6 +582,7 @@ router.post('/users/filter', async (req, res) => {
                 f.star_rating AS \`STAR RATE\`,
                 f.sentiment AS \`SENTIMENT\`,
                 f.status AS \`STATUS\`,
+                f.response_text,
                 f.created_at,
                 f.feedback_id,
                 u.username,
