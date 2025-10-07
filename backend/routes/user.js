@@ -505,8 +505,9 @@ router.put('/profile', Auth.authenticateToken, async (req, res) => {
 router.put('/update-profile', Auth.authenticateToken, async (req, res) => {
     try {
         const userId = req.user.user_id;
-        const { first_name, last_name, contact_number, tester_type_id } = req.body;
+        const { first_name, last_name, username, email, contact_number, tester_type_id, new_password } = req.body;
 
+        // Validate required fields
         if (!first_name || !last_name) {
             return res.status(400).json({ error: 'First name and last name are required' });
         }
@@ -515,8 +516,71 @@ router.put('/update-profile', Auth.authenticateToken, async (req, res) => {
             return res.status(400).json({ error: 'First name and last name must be at least 2 characters' });
         }
 
-        const updateQuery = "UPDATE users SET first_name = ?, last_name = ?, contact_number = ?, tester_type_id = ? WHERE user_id = ?";
-        await db.query(updateQuery, [first_name, last_name, contact_number || null, tester_type_id || null, userId]);
+        // Validate email format if provided
+        if (email && !Auth.validateEmail(email)) {
+            return res.status(400).json({ error: 'Invalid email format' });
+        }
+
+        // Check if email is already taken by another user
+        if (email) {
+            const emailCheckQuery = "SELECT user_id FROM users WHERE email = ? AND user_id != ?";
+            const existingUsers = await db.query(emailCheckQuery, [email, userId]);
+            
+            if (existingUsers.length > 0) {
+                return res.status(400).json({ error: 'Email is already taken' });
+            }
+        }
+
+        // Check if username is already taken by another user
+        if (username) {
+            const usernameCheckQuery = "SELECT user_id FROM users WHERE username = ? AND user_id != ?";
+            const existingUsers = await db.query(usernameCheckQuery, [username, userId]);
+            
+            if (existingUsers.length > 0) {
+                return res.status(400).json({ error: 'Username is already taken' });
+            }
+        }
+
+        // Build dynamic update query
+        let updateFields = [];
+        let updateValues = [];
+
+        updateFields.push('first_name = ?', 'last_name = ?');
+        updateValues.push(first_name, last_name);
+
+        if (username) {
+            updateFields.push('username = ?');
+            updateValues.push(username);
+        }
+
+        if (email) {
+            updateFields.push('email = ?');
+            updateValues.push(email);
+        }
+
+        if (contact_number) {
+            updateFields.push('contact_number = ?');
+            updateValues.push(contact_number);
+        }
+
+        if (tester_type_id) {
+            updateFields.push('tester_type_id = ?');
+            updateValues.push(tester_type_id);
+        }
+
+        if (new_password) {
+            if (new_password.length < 6) {
+                return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+            }
+            const hashedPassword = await Auth.hashPassword(new_password);
+            updateFields.push('password_hash = ?');
+            updateValues.push(hashedPassword);
+        }
+
+        updateValues.push(userId);
+
+        const updateQuery = `UPDATE users SET ${updateFields.join(', ')} WHERE user_id = ?`;
+        await db.query(updateQuery, updateValues);
 
         await Auth.logActivity(userId, 'User profile updated', db);
 

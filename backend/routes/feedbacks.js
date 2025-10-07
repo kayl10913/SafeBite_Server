@@ -178,6 +178,8 @@ router.get('/', async (req, res) => {
                 f.star_rating AS \`STAR RATE\`,
                 f.sentiment AS \`SENTIMENT\`,
                 f.status AS \`STATUS\`,
+                f.admin_notes,
+                f.response_text,
                 f.created_at,
                 f.user_id,
                 u.role AS user_role,
