@@ -241,6 +241,7 @@ const mlAnalyticsRoutes = require('./routes/ml-analytics');
 const alertsRoutes = require('./routes/alerts');
 const deviceManagementRoutes = require('./routes/device-management');
 const spoilageAnalyticsRoutes = require('./routes/spoilage-analytics');
+const statisticsRoutes = require('./routes/statistics');
 
 // API routes
 // Global activity logger (non-blocking)
@@ -309,6 +310,7 @@ app.use('/api/ml/analytics', mlAnalyticsRoutes);
 app.use('/api/alerts', alertsRoutes);
 app.use('/api/device-management', deviceManagementRoutes);
 app.use('/api/spoilage-analytics', spoilageAnalyticsRoutes);
+app.use('/api/statistics', statisticsRoutes);
 
 // Serve frontend routes
 app.get('/', (req, res) => {
