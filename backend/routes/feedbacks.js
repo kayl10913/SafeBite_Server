@@ -295,6 +295,15 @@ router.post('/filter', async (req, res) => {
 router.post('/', Auth.authenticateToken, async (req, res) => {
     try {
         const { feedback_type, priority, feedback_text, star_rating, sentiment } = req.body;
+        
+        console.log('Received feedback data:', {
+            feedback_type,
+            priority,
+            feedback_text,
+            star_rating,
+            sentiment,
+            star_rating_type: typeof star_rating
+        });
 
         const authUserId = req.user && req.user.user_id ? req.user.user_id : null;
         if (!authUserId) {
@@ -316,7 +325,7 @@ router.post('/', Auth.authenticateToken, async (req, res) => {
             INSERT INTO feedbacks 
             (user_id, feedback_type, priority, feedback_text, customer_name, customer_email, star_rating, sentiment)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `, [authUserId, feedback_type, priority, feedback_text, fullName, email, star_rating || null, sentiment || null]);
+        `, [authUserId, feedback_type, priority, feedback_text, fullName, email, star_rating !== undefined ? star_rating : null, sentiment || null]);
 
         res.json({ success: true, message: 'Feedback submitted successfully', data: { feedback_id: result.insertId } });
     } catch (error) {
