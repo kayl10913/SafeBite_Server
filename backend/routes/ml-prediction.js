@@ -60,6 +60,73 @@ router.get('/food-types', Auth.authenticateToken, async (req, res) => {
     }
 });
 
+// GET /api/ml-predictions/:id - Get individual ML prediction by ID
+router.get('/:id', Auth.authenticateToken, async (req, res) => {
+    try {
+        const predictionId = req.params.id;
+        const userId = req.user.user_id;
+        
+        console.log(`Fetching ML prediction data for ID: ${predictionId}, User: ${userId}`);
+        
+        // Get ML prediction data from database
+        const prediction = await db.query(`
+            SELECT 
+                prediction_id,
+                food_id,
+                food_name,
+                food_category,
+                temperature,
+                humidity,
+                gas_level,
+                spoilage_status,
+                spoilage_probability,
+                confidence_score,
+                recommendations,
+                model_used,
+                created_at,
+                is_training_data
+            FROM ml_predictions 
+            WHERE prediction_id = ? AND user_id = ?
+        `, [predictionId, userId]);
+        
+        if (prediction.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'ML prediction not found'
+            });
+        }
+        
+        const predictionData = prediction[0];
+        console.log('Found ML prediction data:', predictionData);
+        
+        res.json({
+            success: true,
+            data: {
+                prediction_id: predictionData.prediction_id,
+                food_id: predictionData.food_id,
+                food_name: predictionData.food_name,
+                food_category: predictionData.food_category,
+                temperature: predictionData.temperature,
+                humidity: predictionData.humidity,
+                gas_level: predictionData.gas_level,
+                spoilage_status: predictionData.spoilage_status,
+                spoilage_probability: predictionData.spoilage_probability,
+                confidence_score: predictionData.confidence_score,
+                recommendations: predictionData.recommendations,
+                model: predictionData.model_used,
+                created_at: predictionData.created_at,
+                is_training_data: predictionData.is_training_data
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching ML prediction:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch ML prediction data'
+        });
+    }
+});
+
 // GET /api/ml-prediction/latest-sensor-data - Get latest sensor data for a specific food type
 router.get('/latest-sensor-data', Auth.authenticateToken, async (req, res) => {
     try {
@@ -258,24 +325,24 @@ function calculateStats(values) {
 function getDefaultThresholds(foodCategory) {
     const defaults = {
         temperature: {
-            safe_max: 26,      // Room temperature upper limit
-            caution_max: 28,   // Above room temperature
-            unsafe_max: 30,    // High temperature
-            safe_min: 22       // Room temperature lower limit
+            safe_max: 30,      // Room temperature upper limit
+            caution_max: 35,   // Above room temperature
+            unsafe_max: 40,    // High temperature
+            safe_min: 15       // Room temperature lower limit
         },
         humidity: {
-            safe_max: 60,      // Normal humidity upper limit
-            caution_max: 70,   // Elevated humidity
-            unsafe_max: 80,    // High humidity
-            safe_min: 40       // Normal humidity lower limit
+            safe_max: 70,      // Normal humidity upper limit
+            caution_max: 80,   // Elevated humidity
+            unsafe_max: 90,    // High humidity
+            safe_min: 30       // Normal humidity lower limit
         },
         gas_level: {
-            safe_max: 120,     // Low Risk (0-120 ppm)
-            caution_max: 250,  // Medium Risk (121-250 ppm)
-            unsafe_max: 500    // High Risk (251+ ppm)
+            safe_max: 199,     // Low Risk (0-199 ppm)
+            caution_max: 399,  // Medium Risk (200-399 ppm)
+            unsafe_max: 500    // High Risk (400+ ppm)
         },
         confidence: 50,
-        reasoning: "Default thresholds based on room temperature (22-26°C), normal humidity (40-60%), and gas emission levels"
+        reasoning: "Default thresholds based on room temperature (15-30°C), normal humidity (30-70%), and gas emission levels"
     };
 
     // Use standardized thresholds for all food categories
@@ -401,7 +468,7 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
             temperature: tempValue,
             humidity: humidityValue,
             gas_level: gasValue
-        }, aiThresholds);
+        }, aiThresholds, food_name);
 
         // Save prediction to database
         console.log('Saving prediction with data:', {
@@ -479,9 +546,9 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
             console.log('🚨 ML Prediction Alert Check:');
             console.log('  Spoilage Status:', prediction.spoilage_status);
             console.log('  Status Lower:', statusLower);
-            console.log('  Should Create Alert:', statusLower && statusLower !== 'safe' && statusLower !== 'fresh');
+            console.log('  Should Create Alert:', statusLower && statusLower !== 'fresh');
             
-            if (statusLower && statusLower !== 'safe' && statusLower !== 'fresh') {
+            if (statusLower && statusLower !== 'fresh') {
                 const alertLevel = (statusLower === 'unsafe' || statusLower === 'spoiled') ? 'High' : 'Medium';
                 const recommendedAction = (statusLower === 'unsafe' || statusLower === 'spoiled')
                     ? 'Discard immediately and sanitize storage area.'
@@ -564,7 +631,7 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
 });
 
 // Simple ML prediction algorithm with AI-calculated thresholds
-async function performMLPrediction(trainingData, sensorReadings, aiThresholds = null) {
+async function performMLPrediction(trainingData, sensorReadings, aiThresholds = null, foodName = null) {
     const { temperature, humidity, gas_level } = sensorReadings;
     
     // Ensure trainingData is an array
@@ -603,7 +670,14 @@ async function performMLPrediction(trainingData, sensorReadings, aiThresholds = 
             parseFloat(r.humidity),
             parseFloat(r.gas_level)
         ]);
-        const labels = trainingData.map(r => String(r.actual_spoilage_status || 'caution').toLowerCase());
+        const labels = trainingData.map(r => {
+            const status = String(r.actual_spoilage_status || 'caution').toLowerCase();
+            // Map training data statuses to prediction groups
+            if (status === 'fresh') return 'safe';
+            else if (status === 'spoiled' || status === 'expired') return 'unsafe';
+            else if (status === 'caution') return 'caution';
+            else return 'caution'; // default fallback
+        });
 
         const x = tf.tensor2d(features);
         const labelSet = ['safe','caution','unsafe'];
@@ -660,7 +734,7 @@ async function performMLPrediction(trainingData, sensorReadings, aiThresholds = 
                     ai_confidence: thresholds.confidence || 50,
                     ai_reasoning: thresholds.reasoning || "TensorFlow-based prediction with default thresholds"
                 },
-                recommendations: generateRecommendations(best, temperature, humidity, gas_level)
+                recommendations: generateRecommendations(best, temperature, humidity, gas_level, foodName)
             };
         }
     }
@@ -710,11 +784,11 @@ async function performMLPrediction(trainingData, sensorReadings, aiThresholds = 
     // Cap at 100%
     spoilageProbability = Math.min(spoilageProbability, 100);
 
-    // Determine spoilage status using AI thresholds
+    // Determine spoilage status using AI thresholds - more conservative
     let spoilageStatus;
-    if (spoilageProbability < 30) {
+    if (spoilageProbability < 50) {
         spoilageStatus = 'safe';
-    } else if (spoilageProbability < 70) {
+    } else if (spoilageProbability < 85) {
         spoilageStatus = 'caution';
     } else {
         spoilageStatus = 'unsafe';
@@ -724,7 +798,7 @@ async function performMLPrediction(trainingData, sensorReadings, aiThresholds = 
     const confidenceScore = Math.min(85 + (trainingData.length * 0.1), 95);
     
     // Generate recommendations
-    const recommendations = generateRecommendations(spoilageStatus, temperature, humidity, gas_level);
+    const recommendations = generateRecommendations(spoilageStatus, temperature, humidity, gas_level, foodName);
     
     return {
         spoilage_probability: Math.round(spoilageProbability),
@@ -746,42 +820,85 @@ async function performMLPrediction(trainingData, sensorReadings, aiThresholds = 
     };
 }
 
-// Generate recommendations based on prediction
-function generateRecommendations(spoilageStatus, temperature, humidity, gas_level) {
-    const recommendations = {
+// Generate recommendations based on prediction using gas emission analysis
+function generateRecommendations(spoilageStatus, temperature, humidity, gas_level, foodName = null) {
+    // Apply gas emission thresholds for all foods - PRIORITY OVER OTHER FACTORS (SmartSense Scanner logic)
+    const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+    const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(gas_level);
+    
+    // Use gas emission analysis as primary source for recommendations
+    let recommendations = {
         main: '',
         details: []
     };
     
-    switch (spoilageStatus) {
-        case 'safe':
-            recommendations.main = 'Food is safe to consume. Continue monitoring.';
-            recommendations.details = [
-                'Maintain current storage conditions',
-                'Check again in 24-48 hours',
-                'Store at optimal temperature (4°C)'
-            ];
-            break;
-            
-        case 'caution':
-            recommendations.main = 'Food shows signs of deterioration. Consume soon.';
-            recommendations.details = [
-                'Use within 24 hours',
-                'Check for visible signs of spoilage',
-                'Consider cooking thoroughly before consumption',
-                'Monitor temperature and humidity'
-            ];
-            break;
-            
-        case 'unsafe':
-            recommendations.main = 'Food is likely spoiled. Do not consume.';
-            recommendations.details = [
-                'Dispose of immediately',
-                'Check other food items in storage',
-                'Clean storage area thoroughly',
-                'Review storage conditions'
-            ];
-            break;
+    // Primary recommendations based on gas emission analysis (SmartSense Scanner logic)
+    if (gasAnalysis.riskLevel === 'high') {
+        recommendations.main = 'Food is likely spoiled. Do not consume.';
+        recommendations.details = [
+            'Dispose of immediately',
+            'Check other food items in storage',
+            'Clean storage area thoroughly',
+            'Review storage conditions'
+        ];
+    } else if (gasAnalysis.riskLevel === 'medium') {
+        recommendations.main = 'Food shows signs of deterioration. Consume soon.';
+        recommendations.details = [
+            'Use within 24 hours',
+            'Check for visible signs of spoilage',
+            'Consider cooking thoroughly before consumption',
+            'Monitor temperature and humidity'
+        ];
+    } else if (gasAnalysis.riskLevel === 'low') {
+        // For low risk gas levels, analyze environmental conditions (SmartSense Scanner logic)
+        const envAnalysis = gasEmissionAnalysis.analyzeEnvironmentalConditions(temperature, humidity, foodName);
+        
+        recommendations.main = 'Food is safe to consume. Continue monitoring.';
+        recommendations.details = [
+            'Maintain current storage conditions',
+            'Check again in 24-48 hours',
+            'Store at optimal temperature (4°C)'
+        ];
+        
+        // Add environmental recommendations if conditions are not optimal
+        if (envAnalysis.overallRisk === 'high') {
+            recommendations.details.push('Environmental conditions are poor - improve storage conditions');
+            recommendations.details.push(envAnalysis.recommendation);
+        } else if (envAnalysis.overallRisk === 'medium') {
+            recommendations.details.push('Environmental conditions are slightly elevated - monitor closely');
+        }
+    } else {
+        // Fallback to original logic if gas analysis fails
+        switch (spoilageStatus) {
+            case 'safe':
+                recommendations.main = 'Food is safe to consume. Continue monitoring.';
+                recommendations.details = [
+                    'Maintain current storage conditions',
+                    'Check again in 24-48 hours',
+                    'Store at optimal temperature (4°C)'
+                ];
+                break;
+                
+            case 'caution':
+                recommendations.main = 'Food shows signs of deterioration. Consume soon.';
+                recommendations.details = [
+                    'Use within 24 hours',
+                    'Check for visible signs of spoilage',
+                    'Consider cooking thoroughly before consumption',
+                    'Monitor temperature and humidity'
+                ];
+                break;
+                
+            case 'unsafe':
+                recommendations.main = 'Food is likely spoiled. Do not consume.';
+                recommendations.details = [
+                    'Dispose of immediately',
+                    'Check other food items in storage',
+                    'Clean storage area thoroughly',
+                    'Review storage conditions'
+                ];
+                break;
+        }
     }
     
     // Add specific recommendations based on sensor readings
@@ -791,8 +908,14 @@ function generateRecommendations(spoilageStatus, temperature, humidity, gas_leve
     if (humidity > 80) {
         recommendations.details.push('Humidity too high - improve ventilation');
     }
-    if (gas_level > 30) {
-        recommendations.details.push('High gas levels detected - check for spoilage');
+    
+    // Add gas emission specific recommendations
+    if (gas_level >= 251) {
+        recommendations.details.push('High gas levels detected (251+ ppm) - spoilage confirmed, dispose immediately');
+    } else if (gas_level >= 121) {
+        recommendations.details.push('Elevated gas levels (121-250 ppm) - early spoilage signs, consume within 1-2 days');
+    } else if (gas_level > 80) {
+        recommendations.details.push('Gas levels rising (80-120 ppm) - monitor closely for spoilage signs');
     }
     
     return recommendations;

@@ -48,7 +48,7 @@ router.get('/sensor-activity', (req, res) => {
     let lastMonth = null;
     const monthToValue = {};
     for (let i = 0; i < chartData.dataPoints.length; i++) {
-        const date = new Date(2025, 0, 1 + i).toISOString().split('T')[0];
+        const date = new Date(new Date().getFullYear(), 0, 1 + i).toISOString().split('T')[0];
         const monthIdx = parseInt(date.split('-')[1]) - 1;
         monthToValue[monthIdx] = chartData.dataPoints[i];
         if (firstMonth === null || monthIdx < firstMonth) firstMonth = monthIdx;
@@ -88,7 +88,7 @@ router.get('/food-risk', (req, res) => {
     let lastMonth = null;
     const monthToValue = {};
     for (let i = 0; i < chartData.dataPoints.length; i++) {
-        const date = new Date(2025, 0, 1 + i).toISOString().split('T')[0];
+        const date = new Date(new Date().getFullYear(), 0, 1 + i).toISOString().split('T')[0];
         const monthIdx = parseInt(date.split('-')[1]) - 1;
         monthToValue[monthIdx] = chartData.dataPoints[i];
         if (firstMonth === null || monthIdx < firstMonth) firstMonth = monthIdx;

@@ -31,8 +31,37 @@ router.post('/add', Auth.authenticateToken, async (req, res) => {
         const allowedSources = new Set(['manual','sensor','user_feedback','expert']);
         const sourceToUse = allowedSources.has(String(data_source || '').toLowerCase()) ? String(data_source).toLowerCase() : 'sensor';
 
+        // Apply gas emission analysis to determine correct spoilage status for training data
+        const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+        const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(Number(gas_level));
+        
+        // Use gas emission analysis to determine the correct spoilage status
+        let correctSpoilageStatus;
+        if (gasAnalysis.riskLevel === 'low') {
+            correctSpoilageStatus = 'safe'; // Gas emission says safe = safe for training data
+        } else if (gasAnalysis.riskLevel === 'medium') {
+            correctSpoilageStatus = 'caution'; // Gas emission says medium = caution
+        } else if (gasAnalysis.riskLevel === 'high') {
+            correctSpoilageStatus = 'unsafe'; // Gas emission says high = unsafe
+        } else {
+            correctSpoilageStatus = String(actual_status).toLowerCase(); // Fallback to provided status
+        }
+        
+        console.log('🔍 ML Training Data Status Override:');
+        console.log('  Gas Risk Level:', gasAnalysis.riskLevel);
+        console.log('  Provided Status:', actual_status);
+        console.log('  Corrected Status:', correctSpoilageStatus);
+        
+        // Validate that the status matches the database ENUM constraint
+        const validStatuses = ['safe', 'caution', 'unsafe'];
+        if (!validStatuses.includes(correctSpoilageStatus)) {
+            console.error('❌ Invalid status for database ENUM:', correctSpoilageStatus);
+            console.error('  Valid values are:', validStatuses);
+            correctSpoilageStatus = 'safe'; // Fallback to safe
+        }
+
         // Normalize inputs
-        const statusToUse = String(actual_status).toLowerCase();
+        const statusToUse = correctSpoilageStatus;
         // If frontend sends percent (0-100), convert to 0-1
         if (quality_score != null && !Number.isNaN(Number(quality_score))) {
             const qn = Number(quality_score);
@@ -40,6 +69,12 @@ router.post('/add', Auth.authenticateToken, async (req, res) => {
         }
         const qualityToUse = (quality_score == null || Number.isNaN(Number(quality_score))) ? 1.0 : Math.max(0, Math.min(1, Number(quality_score)));
 
+        console.log('🔍 ML Training Data Insertion Debug:');
+        console.log('  statusToUse:', statusToUse);
+        console.log('  statusToUse type:', typeof statusToUse);
+        console.log('  correctSpoilageStatus:', correctSpoilageStatus);
+        console.log('  Gas Risk Level:', gasAnalysis.riskLevel);
+        
         const sql = `
             INSERT INTO ml_training_data
             (food_name, food_category, temperature, humidity, gas_level, actual_spoilage_status, data_source, quality_score, environmental_factors)
@@ -54,7 +89,26 @@ router.post('/add', Auth.authenticateToken, async (req, res) => {
             statusToUse,
             sourceToUse,
             qualityToUse,
-            environmental_factors || null
+            environmental_factors ? JSON.stringify({
+                ...environmental_factors,
+                gas_emission_analysis: {
+                    risk_level: gasAnalysis.riskLevel,
+                    status: gasAnalysis.status,
+                    probability: gasAnalysis.probability,
+                    recommendation: gasAnalysis.recommendation
+                },
+                provided_status: actual_status,
+                gas_emission_override: true
+            }) : JSON.stringify({
+                gas_emission_analysis: {
+                    risk_level: gasAnalysis.riskLevel,
+                    status: gasAnalysis.status,
+                    probability: gasAnalysis.probability,
+                    recommendation: gasAnalysis.recommendation
+                },
+                provided_status: actual_status,
+                gas_emission_override: true
+            })
         ];
 
         const result = await db.query(sql, params);
@@ -71,7 +125,9 @@ router.post('/add', Auth.authenticateToken, async (req, res) => {
         return res.status(201).json({
             success: true,
             message: 'Training data added',
-            id: result.insertId
+            id: result.insertId,
+            actual_spoilage_status: correctSpoilageStatus,
+            gas_risk_level: gasAnalysis.riskLevel
         });
     } catch (error) {
         console.error('Error adding ML training data:', error);
@@ -164,12 +220,12 @@ router.post('/training-data', Auth.authenticateToken, async (req, res) => {
         // Log activity
         await db.query('INSERT INTO activity_logs (user_id, action) VALUES (?, ?)', [user_id, `Uploaded ML training data for ${foodName} (${food_status})`]);
 
-        // Create alert for ML training completion - ONLY for caution/unsafe statuses
+        // Create alert for ML training completion - ONLY for unsafe statuses
         console.log('🚨 ML Training Alert Check:');
         console.log('  Food Status:', food_status);
-        console.log('  Should Create Alert:', food_status !== 'fresh' && food_status !== 'safe');
+        console.log('  Should Create Alert:', food_status !== 'fresh');
         
-        if (food_status !== 'fresh' && food_status !== 'safe') {
+        if (food_status !== 'fresh') {
             let alertLevel = 'Medium';
             let alertMessage = '';
             let recommendedAction = '';
@@ -219,7 +275,7 @@ router.post('/training-data', Auth.authenticateToken, async (req, res) => {
             );
             console.log('✅ Alert created for ML training:', alertMessage);
         } else {
-            console.log('✅ Skipping alert creation - food status is safe/fresh');
+            console.log('✅ Skipping alert creation - food status is fresh');
         }
 
         console.log('ML training data uploaded:', {

@@ -251,55 +251,63 @@ async function analyzeFoodSafety(foodName, temperature, humidity, gasLevel, stor
     let result = 'SAFE';
     let recommendations = [];
 
-    // Environmental analysis using baseline conditions
-    const envAnalysis = gasEmissionAnalysis.analyzeEnvironmentalConditions(temperature, humidity);
-    
-    // Temperature analysis based on baseline (24°C from 22-26°C range)
-    if (envAnalysis.tempRisk === 'high') {
-        // For extremely high temperatures (>30°C), this should be UNSAFE
-        safetyScore -= 60; // Increased penalty for high temperature risk
-        result = 'UNSAFE';
-        recommendations.push('Temperature is dangerously high for food storage. Food spoilage risk is very high. Refrigerate immediately or discard.');
-    } else if (envAnalysis.tempRisk === 'medium') {
-        safetyScore -= 25; // Increased penalty for medium temperature risk
-        if (result === 'SAFE') result = 'CAUTION';
-        recommendations.push('Temperature is above safe range (26°C). Monitor closely and consider cooler storage.');
-    } else if (temperature < 0) {
-        safetyScore -= 10;
-        result = 'CAUTION';
-        recommendations.push('Temperature is very low. Some foods may freeze and lose quality.');
-    }
-
-    // Humidity analysis based on baseline (73.8%)
-    if (envAnalysis.humidityRisk === 'high') {
-        safetyScore -= 25;
-        if (result === 'SAFE') result = 'CAUTION';
-        recommendations.push('Humidity is significantly above normal for your location. This can promote bacterial growth.');
-    } else if (envAnalysis.humidityRisk === 'medium') {
-        safetyScore -= 10;
-        if (result === 'SAFE') result = 'CAUTION';
-        recommendations.push('Humidity is slightly above normal for your location. Monitor food condition closely.');
-    }
-
-    // Gas level analysis using centralized gas emission analysis
+    // Gas level analysis using centralized gas emission analysis - PRIMARY INDICATOR
     const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(gasLevel);
     
+    // Environmental analysis using baseline conditions - SECONDARY TO GAS EMISSION
+    const envAnalysis = gasEmissionAnalysis.analyzeEnvironmentalConditions(temperature, humidity);
+    
+    // Temperature analysis based on baseline (24°C from 22-26°C range) - ONLY IF GAS IS LOW RISK
+    if (gasAnalysis.riskLevel === 'low') {
+        if (envAnalysis.tempRisk === 'high') {
+            // For extremely high temperatures (>35°C), this should be UNSAFE
+            safetyScore -= 40; // Reduced penalty for high temperature risk
+            result = 'UNSAFE';
+            recommendations.push('Temperature is dangerously high for food storage. Food spoilage risk is very high. Refrigerate immediately or discard.');
+        } else if (envAnalysis.tempRisk === 'medium') {
+            safetyScore -= 15; // Reduced penalty for medium temperature risk
+            if (result === 'SAFE') result = 'CAUTION';
+            recommendations.push('Temperature is above optimal range. Monitor closely and consider cooler storage.');
+        } else if (temperature < 0) {
+            safetyScore -= 10;
+            result = 'CAUTION';
+            recommendations.push('Temperature is very low. Some foods may freeze and lose quality.');
+        }
+
+        // Humidity analysis based on baseline (73.8%) - ONLY IF GAS IS LOW RISK
+        if (envAnalysis.humidityRisk === 'high') {
+            safetyScore -= 25;
+            if (result === 'SAFE') result = 'CAUTION';
+            recommendations.push('Humidity is significantly above normal for your location. This can promote bacterial growth.');
+        } else if (envAnalysis.humidityRisk === 'medium') {
+            safetyScore -= 10;
+            if (result === 'SAFE') result = 'CAUTION';
+            recommendations.push('Humidity is slightly above normal for your location. Monitor food condition closely.');
+        }
+    }
+    
+    // Apply gas emission analysis results
     if (gasAnalysis.riskLevel === 'high') {
-        // High Risk (251+ ppm)
-        safetyScore -= 50;
+        // High Risk (400+ ppm) - OVERRIDE ALL OTHER FACTORS
+        safetyScore = 20; // Force low safety score
         result = 'UNSAFE';
         recommendations.push(gasAnalysis.recommendation);
     } else if (gasAnalysis.riskLevel === 'medium') {
-        // Medium Risk (121-250 ppm)
-        safetyScore -= 30;
-        if (result === 'SAFE') result = 'CAUTION';
+        // Medium Risk (200-399 ppm) - OVERRIDE ENVIRONMENTAL FACTORS
+        safetyScore = 60; // Set to medium risk score
+        result = 'CAUTION';
         recommendations.push(gasAnalysis.recommendation);
     } else if (gasAnalysis.riskLevel === 'low') {
-        // Low Risk (0-120)
-        if (gasLevel > 80) {
-            safetyScore -= 10;
+        // Low Risk (0-199) - Start with high safety score, environmental factors can reduce it
+        safetyScore = 90; // Start with high safety score for low gas levels
+        result = 'SAFE';
+        
+        if (gasLevel > 150) {
+            safetyScore -= 10; // Minor adjustment for rising gas levels
             if (result === 'SAFE') result = 'CAUTION';
         }
+        
+        // Environmental factors (already applied above if gas is low risk)
         recommendations.push(gasAnalysis.recommendation);
     } else {
         // Invalid gas level
@@ -325,11 +333,27 @@ async function analyzeFoodSafety(foodName, temperature, humidity, gasLevel, stor
     // Ensure safety score doesn't go below 0
     safetyScore = Math.max(0, safetyScore);
 
-    // Final result determination
-    if (safetyScore < 50) {
-        result = 'UNSAFE';
-    } else if (safetyScore < 75) {
-        result = 'CAUTION';
+    // Final result determination - Gas emission takes priority
+    if (gasAnalysis.riskLevel === 'high') {
+        result = 'UNSAFE'; // Gas emission overrides all other factors
+    } else if (gasAnalysis.riskLevel === 'medium') {
+        result = 'CAUTION'; // Gas emission overrides environmental factors
+    } else if (gasAnalysis.riskLevel === 'low') {
+        // For low gas levels, environmental factors can only downgrade to CAUTION, not UNSAFE
+        if (safetyScore < 75) {
+            result = 'CAUTION';
+        } else {
+            result = 'SAFE'; // Low gas levels = safe, regardless of environmental factors
+        }
+    }
+    
+    // Fallback to safety score if gas analysis fails
+    if (!gasAnalysis.riskLevel) {
+        if (safetyScore < 50) {
+            result = 'UNSAFE';
+        } else if (safetyScore < 75) {
+            result = 'CAUTION';
+        }
     }
 
     return {
@@ -419,11 +443,17 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
 
         const systemInstruction = 'You are an AI food spoilage risk analyst for a sensor-driven monitoring system. '
             + 'Given food type and current sensor readings (temperature in °C, humidity in %, and gas level from a VOC sensor), '
-            + 'assess spoilage risk and return a concise JSON object only. '
-            + 'IMPORTANT: The baseline environmental conditions for this location are: Temperature 22-26°C (room temperature), Humidity 40-60% (normal). '
-            + 'Consider these baseline values when assessing risk - temperatures and humidity within these ranges are normal for this location. '
+            + 'assess spoilage risk and return ONLY a valid JSON object. '
+            + 'CRITICAL: Gas emission thresholds are the PRIMARY indicator of spoilage: '
+            + 'Low Risk (0-120 ppm): Fresh/Safe - Food is safe to consume and store. Keep in a cool, dry place or refrigerate if needed. '
+            + 'Medium Risk (121-250 ppm): Early Spoilage Signs - Consume soon (within 1-2 days). Refrigerate immediately if not yet stored. Check for changes in smell, texture, or color. '
+            + 'High Risk (251+ ppm): Spoilage Detected - Do not consume. Dispose of the food to avoid foodborne illness. Sanitize storage area to prevent cross-contamination. '
+            + 'LOCATION-SPECIFIC ENVIRONMENTAL CONDITIONS: Container Temperature 22-26°C (empty container baseline), Humidity 40-60% (normal). '
+            + 'These are the baseline environmental conditions for this specific location when the container is empty. '
+            + 'Gas emission levels take PRIORITY over temperature and humidity readings for spoilage assessment. '
             + 'Use food-safety knowledge and typical thresholds for different food categories. '
-            + 'If uncertain, make a best-effort estimate based on comparable foods. Keep reasoning concise.';
+            + 'If uncertain, make a best-effort estimate based on comparable foods. Keep reasoning concise. '
+            + 'IMPORTANT: Return ONLY valid JSON. No markdown, no explanations, no additional text.';
 
         // Request structured JSON output
         const schema = {
@@ -442,9 +472,11 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
             `Humidity (%): ${humidity}`,
             `Gas Level: ${gas}`,
             '',
-            `Baseline Environmental Conditions for this location:`,
-            `- Normal Temperature: 22-26°C (room temperature)`,
-            `- Normal Humidity: 40-60% (normal range)`,
+            `LOCATION-SPECIFIC ENVIRONMENTAL CONDITIONS:`,
+            `- Container Temperature: 22-26°C (empty container baseline)`,
+            `- Humidity: 40-60% (normal range)`,
+            `- These are the baseline environmental conditions when container is empty`,
+            `- Gas emission is the real-time food spoilage indicator (not environmental)`,
             '',
             'Return ONLY valid JSON matching this structure (no markdown, no extra text):',
             JSON.stringify(schema, null, 2)
@@ -471,21 +503,34 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
         // Normalize possible markdown code fences and try to decode as JSON
         let analysis = null;
         let cleaned = (text || '').trim();
+        
         // Strip ```json ... ``` or ``` ... ``` fences if present
         if (cleaned.startsWith('```json')) {
             cleaned = cleaned.replace(/^```json\s*/, '').replace(/\s*```$/, '');
         } else if (cleaned.startsWith('```')) {
             cleaned = cleaned.replace(/^```\s*/, '').replace(/\s*```$/, '');
         }
+        
+        // Remove any leading/trailing text that's not JSON
+        const jsonStart = cleaned.indexOf('{');
+        const jsonEnd = cleaned.lastIndexOf('}');
+        if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+            cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+        }
+        
         // Try direct parse first
         try {
             analysis = JSON.parse(cleaned);
         } catch (parseError) {
+            console.log('🔍 JSON Parse Error:', parseError.message);
+            console.log('🔍 Cleaned text:', cleaned.slice(0, 200));
+            
             // Fallback: extract first JSON-looking block
             const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 try {
                     analysis = JSON.parse(jsonMatch[0]);
+                    console.log('✅ Successfully parsed JSON from fallback extraction');
                 } catch (fallbackError) {
                     console.error('Failed to parse JSON from Gemini response (fallback):', fallbackError);
                 }
@@ -494,15 +539,28 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
 
         // Final fallback: supply a safe default object to avoid hard failure
         if (!analysis || typeof analysis !== 'object') {
-            console.warn('Model did not return valid JSON. Returning safe default analysis. Raw:', cleaned.slice(0, 500));
+            console.warn('Model did not return valid JSON. Using gas emission analysis instead. Raw:', cleaned.slice(0, 500));
+            
+            // Use gas emission analysis for more accurate fallback
+            const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+            const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(gas);
+            
             analysis = {
-                riskLevel: 'caution',
-                riskScore: 60,
-                summary: 'Model response could not be parsed; using conservative defaults.',
-                keyFactors: ['Unparseable AI response'],
-                recommendations: ['Re-run analysis', 'Verify sensor inputs', 'Store at safe temperature (<=4°C)'],
-                estimatedShelfLifeHours: 24,
-                notes: 'Fallback generated by server due to invalid AI JSON.'
+                riskLevel: gasAnalysis.riskLevel === 'high' ? 'High' : gasAnalysis.riskLevel === 'medium' ? 'Medium' : 'Low',
+                riskScore: gasAnalysis.probability,
+                summary: gasAnalysis.recommendation,
+                keyFactors: ['Gas emission analysis', 'Sensor readings'],
+                recommendations: {
+                    main: gasAnalysis.recommendation,
+                    details: [
+                        'Monitor gas levels closely',
+                        'Check for visible signs of spoilage',
+                        'Verify sensor readings are accurate'
+                    ]
+                },
+                estimatedShelfLifeHours: gasAnalysis.riskLevel === 'high' ? 0 : gasAnalysis.riskLevel === 'medium' ? 12 : 48,
+                notes: 'Analysis based on gas emission thresholds due to AI parsing error.',
+                spoilage_status: gasAnalysis.riskLevel === 'high' ? 'unsafe' : gasAnalysis.riskLevel === 'medium' ? 'caution' : 'safe'
             };
         }
 
@@ -557,6 +615,14 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
             }
         } catch (validationError) {
             console.warn('Failed to validate AI result:', validationError.message);
+        }
+
+        // Convert recommendations to structured format if needed
+        if (analysis.recommendations && Array.isArray(analysis.recommendations)) {
+            analysis.recommendations = {
+                main: analysis.recommendations[0] || 'Follow recommended actions',
+                details: analysis.recommendations.slice(1) || []
+            };
         }
 
         // Log the analysis request for activity tracking

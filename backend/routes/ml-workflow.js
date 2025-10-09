@@ -22,9 +22,9 @@ function assessSmartSenseStatus(foodName, category, temperature, humidity, gasLe
 		};
 	}
 	
-	// For low risk gas levels, analyze environmental conditions based on baseline values
+	// For low risk gas levels, analyze environmental conditions based on food-specific requirements
 	// Gas emission thresholds take priority - if gas is safe, food is generally safe
-	const envAnalysis = gasEmissionAnalysis.analyzeEnvironmentalConditions(temperature, humidity);
+	const envAnalysis = gasEmissionAnalysis.analyzeEnvironmentalConditions(temperature, humidity, foodName);
 	
 	let status = 'safe';
 	let probability = 20; // Base safe probability for low gas levels
@@ -69,8 +69,15 @@ async function assessFromTrainingData(dbRef, foodName, category, temperature, hu
 		const groups = { safe: [], caution: [], unsafe: [] };
 		for (const r of rows) {
 			const label = (r.actual_spoilage_status || '').toLowerCase();
-			if (groups[label]) {
-				groups[label].push({ t: parseFloat(r.temperature), h: parseFloat(r.humidity), g: parseFloat(r.gas_level) });
+			// Map training data statuses to prediction groups
+			let mappedLabel = label;
+			if (label === 'fresh') mappedLabel = 'safe';
+			else if (label === 'spoiled') mappedLabel = 'unsafe';
+			else if (label === 'expired') mappedLabel = 'unsafe';
+			else if (label === 'caution') mappedLabel = 'caution';
+			
+			if (groups[mappedLabel]) {
+				groups[mappedLabel].push({ t: parseFloat(r.temperature), h: parseFloat(r.humidity), g: parseFloat(r.gas_level) });
 			}
 		}
 
@@ -217,7 +224,41 @@ router.post('/training-data', Auth.authenticateToken, async (req, res) => {
             });
         }
 
-        // Insert training data
+        // Apply gas emission analysis to determine correct spoilage status for training data
+        const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+        const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(finalGasLevel);
+        
+        // Use gas emission analysis to determine the correct spoilage status
+        let correctSpoilageStatus;
+        if (gasAnalysis.riskLevel === 'low') {
+            correctSpoilageStatus = 'safe'; // Gas emission says safe = safe (matches ENUM)
+        } else if (gasAnalysis.riskLevel === 'medium') {
+            correctSpoilageStatus = 'caution'; // Gas emission says medium = caution
+        } else if (gasAnalysis.riskLevel === 'high') {
+            correctSpoilageStatus = 'unsafe'; // Gas emission says high = unsafe (matches ENUM)
+        } else {
+            correctSpoilageStatus = spoilage_status; // Fallback to provided status
+        }
+        
+        console.log('🔍 ML Workflow Training Data Status Override:');
+        console.log('  Gas Risk Level:', gasAnalysis.riskLevel);
+        console.log('  Provided Status:', spoilage_status);
+        console.log('  Corrected Status:', correctSpoilageStatus);
+        
+        // Validate that the status matches the database ENUM constraint
+        const validStatuses = ['safe', 'caution', 'unsafe'];
+        if (!validStatuses.includes(correctSpoilageStatus)) {
+            console.error('❌ Invalid status for database ENUM:', correctSpoilageStatus);
+            console.error('  Valid values are:', validStatuses);
+            correctSpoilageStatus = 'safe'; // Fallback to safe
+        }
+
+        // Insert training data with gas emission analysis priority
+        console.log('🔍 ML Workflow Training Data Insertion Debug:');
+        console.log('  correctSpoilageStatus:', correctSpoilageStatus);
+        console.log('  correctSpoilageStatus type:', typeof correctSpoilageStatus);
+        console.log('  Gas Risk Level:', gasAnalysis.riskLevel);
+        
         const result = await db.query(
             `INSERT INTO ml_training_data 
             (food_name, food_category, temperature, humidity, gas_level, 
@@ -229,23 +270,46 @@ router.post('/training-data', Auth.authenticateToken, async (req, res) => {
                 finalTemperature,
                 finalHumidity,
                 finalGasLevel,
-                spoilage_status,
+                correctSpoilageStatus,
                 'expert', // AI analysis source
                 0.95, // High quality AI data
                 JSON.stringify({
                     ai_analysis: true,
                     confidence: confidence_score || 85,
                     storage_conditions: storage_conditions || {},
+                    gas_emission_analysis: {
+                        risk_level: gasAnalysis.riskLevel,
+                        status: gasAnalysis.status,
+                        probability: gasAnalysis.probability,
+                        recommendation: gasAnalysis.recommendation
+                    },
+                    provided_status: spoilage_status,
+                    gas_emission_override: true,
                     timestamp: new Date().toISOString()
                 })
             ]
         );
 
         console.log('Training data stored successfully with ID:', result.insertId);
+        
+        // Verify the inserted data
+        try {
+            const [verifyResult] = await db.query(
+                'SELECT actual_spoilage_status FROM ml_training_data WHERE id = ?',
+                [result.insertId]
+            );
+            console.log('🔍 ML Workflow Verification Query Result:');
+            console.log('  Inserted actual_spoilage_status:', verifyResult[0]?.actual_spoilage_status);
+            console.log('  Expected:', correctSpoilageStatus);
+        } catch (verifyError) {
+            console.error('Error verifying inserted data:', verifyError);
+        }
 
         res.json({
             success: true,
             training_id: result.insertId,
+            actual_spoilage_status: correctSpoilageStatus,
+            gas_risk_level: gasAnalysis.riskLevel,
             message: 'Training data stored successfully'
         });
 
@@ -420,25 +484,56 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
         });
         console.log('  Temperature Check: 61.10°C > 26°C threshold?', parseFloat(finalTemperature) > 26);
         
+        // Prioritize gas emission analysis first, then AI analysis, then training data, then SmartSense assessment
+        // Gas emission is the PRIMARY indicator of spoilage
+        const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(parseFloat(finalGasLevel));
+        let gasBasedStatus = 'safe';
+        if (gasAnalysis.riskLevel === 'high') {
+            gasBasedStatus = 'unsafe';
+        } else if (gasAnalysis.riskLevel === 'medium') {
+            gasBasedStatus = 'caution';
+        } else if (gasAnalysis.riskLevel === 'low') {
+            gasBasedStatus = 'safe';
+        }
+        
         const trained = await assessFromTrainingData(db, food_name, food_category, parseFloat(finalTemperature), parseFloat(finalHumidity), parseFloat(finalGasLevel));
         const smart = assessSmartSenseStatus(food_name, food_category, parseFloat(finalTemperature), parseFloat(finalHumidity), parseFloat(finalGasLevel));
         
+        console.log('  Gas Emission Analysis:', gasAnalysis.riskLevel, gasBasedStatus);
+        console.log('  AI Analysis Status:', spoilage_status);
         console.log('  Training Data Assessment:', trained ? trained.status : 'None');
         console.log('  SmartSense Assessment:', smart ? smart.status : 'None');
         
-        // Prioritize AI analysis result, then training data, then SmartSense assessment
-        // Only use 'safe' as absolute last resort if ALL methods fail
-        const finalStatus = spoilage_status || 
-                           (trained ? trained.status : null) || 
-                           (smart ? smart.status : null) || 
-                           'safe'; // Last resort only
+        // Gas emission analysis takes absolute priority - ignore all other factors
+        let finalStatus;
+        if (gasAnalysis.riskLevel === 'low') {
+            finalStatus = 'safe'; // Gas emission says safe = safe, regardless of AI analysis
+        } else if (gasAnalysis.riskLevel === 'medium') {
+            finalStatus = 'caution'; // Gas emission says medium = caution, regardless of AI analysis
+        } else if (gasAnalysis.riskLevel === 'high') {
+            finalStatus = 'unsafe'; // Gas emission says high = unsafe, regardless of AI analysis
+        } else {
+            // Fallback to other methods only if gas analysis fails
+            finalStatus = gasBasedStatus || 
+                         spoilage_status || 
+                         (trained ? trained.status : null) || 
+                         (smart ? smart.status : null) || 
+                         'safe';
+        }
         
-        const finalProbability = spoilage_probability || 
+        console.log('  Final Status Determination:');
+        console.log('    Gas Risk Level:', gasAnalysis.riskLevel);
+        console.log('    Final Status:', finalStatus);
+        console.log('    Will Create Alert:', finalStatus !== 'safe');
+        
+        const finalProbability = gasAnalysis.probability || 
+                                 spoilage_probability || 
                                  (trained ? trained.probability : null) || 
                                  (smart ? smart.probability : null) || 
                                  75; // Default probability
         
-        const finalConfidence = confidence_score || 
+        const finalConfidence = gasAnalysis.confidence || 
+                               confidence_score || 
                                (trained ? Math.max(trained.confidence, 85.0) : null) || 
                                (smart ? Math.max(smart.confidence, 85.0) : null) || 
                                85.0; // Default confidence
@@ -545,6 +640,12 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
             }
         }
 
+        console.log('🔍 ML Workflow Response to Frontend:');
+        console.log('  Final Status:', finalStatus);
+        console.log('  Final Probability:', finalProbability);
+        console.log('  Final Confidence:', finalConfidence);
+        console.log('  Gas Risk Level:', gasAnalysis.riskLevel);
+        
         res.json({
             success: true,
             prediction_id: result.insertId,

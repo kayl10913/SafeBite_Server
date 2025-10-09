@@ -133,23 +133,69 @@ router.post('/training-data', Auth.authenticateToken, async (req, res) => {
             setCachedTraining(cacheKey, aiAnalysis);
         }
 
-        // Create comprehensive training data
+        // Apply gas emission analysis to determine correct spoilage status for training data
+        const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+        const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(gasValue);
+        
+        // Use gas emission analysis to determine the correct spoilage status
+        let correctSpoilageStatus;
+        if (gasAnalysis.riskLevel === 'low') {
+            correctSpoilageStatus = 'safe'; // Gas emission says safe = safe (matches ENUM)
+        } else if (gasAnalysis.riskLevel === 'medium') {
+            correctSpoilageStatus = 'caution'; // Gas emission says medium = caution
+        } else if (gasAnalysis.riskLevel === 'high') {
+            correctSpoilageStatus = 'unsafe'; // Gas emission says high = unsafe (matches ENUM)
+        } else {
+            correctSpoilageStatus = aiAnalysis.spoilage_status; // Fallback to AI analysis
+        }
+        
+        console.log('🔍 Training Data Status Override:');
+        console.log('  Full AI Analysis Object:', aiAnalysis);
+        console.log('  Gas Risk Level:', gasAnalysis.riskLevel);
+        console.log('  AI Analysis Status:', aiAnalysis.spoilage_status);
+        console.log('  AI Analysis Type:', typeof aiAnalysis.spoilage_status);
+        console.log('  Corrected Status:', correctSpoilageStatus);
+        
+        // Validate that the status matches the database ENUM constraint
+        const validStatuses = ['safe', 'caution', 'unsafe'];
+        if (!validStatuses.includes(correctSpoilageStatus)) {
+            console.error('❌ Invalid status for database ENUM:', correctSpoilageStatus);
+            console.error('  Valid values are:', validStatuses);
+            correctSpoilageStatus = 'safe'; // Fallback to safe
+        }
+
+        // Create comprehensive training data with gas emission analysis priority
         const trainingData = {
             food_name,
             food_category,
             temperature: tempValue,
             humidity: humidityValue,
             gas_level: gasValue,
-            actual_spoilage_status: aiAnalysis.spoilage_status,
+            actual_spoilage_status: correctSpoilageStatus,
             storage_duration_hours: aiAnalysis.storage_duration_hours,
-            environmental_factors: JSON.stringify(aiAnalysis.environmental_factors),
+            environmental_factors: JSON.stringify({
+                ...aiAnalysis.environmental_factors,
+                gas_emission_analysis: {
+                    risk_level: gasAnalysis.riskLevel,
+                    status: gasAnalysis.status,
+                    probability: gasAnalysis.probability,
+                    recommendation: gasAnalysis.recommendation
+                },
+                ai_analysis_original: aiAnalysis.spoilage_status,
+                gas_emission_override: true
+            }),
             data_source: 'expert',
             quality_score: aiAnalysis.quality_score
         };
 
         // Insert into ml_training_data table
-        console.log('Inserting training data:', trainingData);
-        const [result] = await db.query(
+        console.log('🔍 Training Data Insertion Debug:');
+        console.log('  Full trainingData object:', trainingData);
+        console.log('  actual_spoilage_status value:', trainingData.actual_spoilage_status);
+        console.log('  actual_spoilage_status type:', typeof trainingData.actual_spoilage_status);
+        console.log('  correctSpoilageStatus:', correctSpoilageStatus);
+        
+        const result = await db.query(
             `INSERT INTO ml_training_data 
             (food_name, food_category, temperature, humidity, gas_level, 
              actual_spoilage_status, storage_duration_hours, environmental_factors, 
@@ -169,28 +215,41 @@ router.post('/training-data', Auth.authenticateToken, async (req, res) => {
             ]
         );
         console.log('Training data inserted successfully with ID:', result.insertId);
+        
+        // Verify the inserted data
+        try {
+            const verifyResult = await db.query(
+                'SELECT actual_spoilage_status FROM ml_training_data WHERE training_id = ?',
+                [result.insertId]
+            );
+            console.log('🔍 Verification Query Result:');
+            console.log('  Inserted actual_spoilage_status:', verifyResult[0]?.actual_spoilage_status);
+            console.log('  Expected:', correctSpoilageStatus);
+        } catch (verifyError) {
+            console.error('Error verifying inserted data:', verifyError);
+        }
 
         // Create alert for new training data - ONLY for caution/unsafe statuses
         try {
-            const spoilageStatus = aiAnalysis.spoilage_status?.toLowerCase();
+            const spoilageStatus = correctSpoilageStatus?.toLowerCase();
             console.log('🚨 AI Training Alert Check:');
-            console.log('  Spoilage Status:', spoilageStatus);
-            console.log('  Should Create Alert:', spoilageStatus && spoilageStatus !== 'safe' && spoilageStatus !== 'fresh');
+            console.log('  Corrected Spoilage Status:', spoilageStatus);
+            console.log('  Should Create Alert:', spoilageStatus && spoilageStatus !== 'fresh');
             
-            if (spoilageStatus && spoilageStatus !== 'safe' && spoilageStatus !== 'fresh') {
+            if (spoilageStatus && spoilageStatus !== 'fresh') {
                 await db.query(
                     `INSERT INTO alerts (user_id, message, alert_level, alert_type) 
                     VALUES (?, ?, ?, ?)`,
                     [
                         user_id,
-                        `AI analyzed ${food_name} and created training data (${aiAnalysis.spoilage_status})`,
+                        `AI analyzed ${food_name} and created training data (${correctSpoilageStatus})`,
                         spoilageStatus === 'unsafe' || spoilageStatus === 'spoiled' ? 'High' : 'Medium',
                         'system'
                     ]
                 );
-                console.log('✅ Alert created for AI training:', aiAnalysis.spoilage_status);
+                console.log('✅ Alert created for AI training:', correctSpoilageStatus);
             } else {
-                console.log('✅ Skipping alert creation - food status is safe/fresh');
+                console.log('✅ Skipping alert creation - food status is fresh');
             }
         } catch (alertError) {
             console.warn('Could not create alert:', alertError);
@@ -200,7 +259,7 @@ router.post('/training-data', Auth.authenticateToken, async (req, res) => {
         // Log activity
         try {
             await db.query('INSERT INTO activity_logs (user_id, action) VALUES (?, ?)', 
-                [user_id, `AI generated training data for ${food_name} (${aiAnalysis.spoilage_status})`]);
+                [user_id, `AI generated training data for ${food_name} (${correctSpoilageStatus})`]);
         } catch (logError) {
             console.warn('Could not log activity:', logError);
             // Don't fail the whole process if logging fails
@@ -214,6 +273,8 @@ router.post('/training-data', Auth.authenticateToken, async (req, res) => {
                 food_name,
                 food_category,
                 spoilage_status: aiAnalysis.spoilage_status,
+                actual_spoilage_status: correctSpoilageStatus,
+                gas_risk_level: gasAnalysis.riskLevel,
                 confidence: aiAnalysis.confidence,
                 quality_score: aiAnalysis.quality_score,
                 environmental_factors: aiAnalysis.environmental_factors,

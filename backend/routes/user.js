@@ -1663,7 +1663,7 @@ router.get('/latest-scan-result', Auth.authenticateToken, async (req, res) => {
                     expiryStatus: expiryStatus,
                     daysLeft: daysLeft,
                     recommendations: recommendations,
-                    createdAt: scanData.created_at
+                    createdAt: new Date().toISOString()
                 }
             });
         } else {
