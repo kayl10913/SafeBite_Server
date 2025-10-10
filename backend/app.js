@@ -369,19 +369,11 @@ app.use((req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 SafeBite server is running on 0.0.0.0:${PORT}`);
-    if (isDevelopment) {
-        console.log(`🌐 Frontend: http://localhost:${PORT}`);
-        console.log(`📱 Mobile Access: http://192.168.16.102:${PORT}`);
-        console.log(`🔌 API test: http://localhost:${PORT}/api/test`);
-        console.log(`📊 Health check: http://localhost:${PORT}/health`);
-        console.log(`🔗 Arduino endpoint: http://localhost:${PORT}/api/sensor/arduino-data`);
-    } else {
-        console.log(`🌐 Frontend: https://safebiteph.com`);
-        console.log(`🔗 API base: https://safebite-server-zh2r.onrender.com`);
-        console.log(`🔌 API test: https://safebite-server-zh2r.onrender.com/api/test`);
-        console.log(`📊 Health check: https://safebite-server-zh2r.onrender.com/health`);
-        console.log(`🔗 Arduino endpoint: https://safebite-server-zh2r.onrender.com/api/sensor/arduino-data`);
-    }
+    console.log(`🌐 Frontend: https://safebiteph.com`);
+    console.log(`🔗 API base: https://safebite-server-zh2r.onrender.com`);
+    console.log(`🔌 API test: https://safebite-server-zh2r.onrender.com/api/test`);
+    console.log(`📊 Health check: https://safebite-server-zh2r.onrender.com/health`);
+    console.log(`🔗 Arduino endpoint: https://safebite-server-zh2r.onrender.com/api/sensor/arduino-data`);
 });
 
 module.exports = app;
