@@ -7,55 +7,51 @@ class Database {
         this.db_name = process.env.DB_NAME;
         this.username = process.env.DB_USER;
         this.password = process.env.DB_PASSWORD;
-        this.port = parseInt(process.env.DB_PORT, 10);
+        this.port = parseInt(process.env.DB_PORT, 10) || 3306;
         // Enable SSL when DB_SSL=true. You can control certificate verification via DB_SSL_REJECT_UNAUTHORIZED (default true)
         this.ssl = (process.env.DB_SSL === 'true')
             ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' }
             : undefined;
-        this.connection = null;
+
+        this.pool = null;
+        this.keepAliveTimer = null;
     }
 
-    async getConnection() {
-        try {
-            if (!this.connection) {
-                const connectionOptions = {
-                    host: this.host,
-                    port: this.port,
-                    user: this.username,
-                    password: this.password,
-                    database: this.db_name,
-                    charset: 'utf8mb4',
-                    timezone: '+00:00',
-                    connectTimeout: 10000
-                };
+    createPool() {
+        if (this.pool) return this.pool;
+        const poolOptions = {
+            host: this.host,
+            port: this.port,
+            user: this.username,
+            password: this.password,
+            database: this.db_name,
+            charset: 'utf8mb4',
+            timezone: '+00:00',
+            waitForConnections: true,
+            connectionLimit: parseInt(process.env.DB_POOL_LIMIT, 10) || 5,
+            queueLimit: 0,
+            enableKeepAlive: true,
+            keepAliveInitialDelay: 0
+        };
+        if (this.ssl) poolOptions.ssl = this.ssl;
 
-                if (this.ssl) {
-                    connectionOptions.ssl = this.ssl;
-                }
+        this.pool = mysql.createPool(poolOptions);
 
-                this.connection = await mysql.createConnection(connectionOptions);
-                
-                console.log('Database connected successfully');
-            }
-            return this.connection;
-        } catch (error) {
-            console.error('Database connection error:', error);
-            console.error('Connection details:', {
-                host: this.host,
-                user: this.username,
-                database: this.db_name,
-                hasPassword: !!this.password
-            });
-            throw new Error(`Connection error: ${error.message}`);
-        }
+        // Keep-alive ping to prevent idle disconnects on providers like Render
+        this.keepAliveTimer = setInterval(async () => {
+            try {
+                await this.pool.query('SELECT 1');
+            } catch (_) {}
+        }, 60 * 1000);
+
+        console.log('Database pool created successfully');
+        return this.pool;
     }
 
     async query(sql, params = []) {
         try {
-            const connection = await this.getConnection();
-            const [rows, fields] = await connection.execute(sql, params);
-            // For INSERT/UPDATE/DELETE operations, we need to return the full result object
-            // For SELECT operations, we return just the rows
+            const pool = this.createPool();
+            const [rows] = await pool.execute(sql, params);
             const sqlType = sql.trim().toUpperCase();
             if (sqlType.startsWith('INSERT') || sqlType.startsWith('UPDATE') || sqlType.startsWith('DELETE')) {
                 return { insertId: rows.insertId, affectedRows: rows.affectedRows };
@@ -63,34 +59,19 @@ class Database {
             return rows;
         } catch (error) {
             console.error('Query error:', error);
-            // If connection is lost, try to reconnect
-            if (error.code === 'PROTOCOL_CONNECTION_LOST' || error.code === 'ETIMEDOUT') {
-                console.log('Connection lost, attempting to reconnect...');
-                this.connection = null;
-                try {
-                    const connection = await this.getConnection();
-                    const [rows, fields] = await connection.execute(sql, params);
-                    // For INSERT/UPDATE/DELETE operations, we need to return the full result object
-                    // For SELECT operations, we return just the rows
-                    const sqlType = sql.trim().toUpperCase();
-                    if (sqlType.startsWith('INSERT') || sqlType.startsWith('UPDATE') || sqlType.startsWith('DELETE')) {
-                        return { insertId: rows.insertId, affectedRows: rows.affectedRows };
-                    }
-                    return rows;
-                } catch (retryError) {
-                    console.error('Reconnection failed:', retryError);
-                    throw retryError;
-                }
-            }
             throw error;
         }
     }
 
     async closeConnection() {
-        if (this.connection) {
-            await this.connection.end();
-            this.connection = null;
-            console.log('Database connection closed');
+        if (this.keepAliveTimer) {
+            clearInterval(this.keepAliveTimer);
+            this.keepAliveTimer = null;
+        }
+        if (this.pool) {
+            await this.pool.end();
+            this.pool = null;
+            console.log('Database pool closed');
         }
     }
 }
