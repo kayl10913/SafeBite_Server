@@ -8,7 +8,8 @@ require('dotenv').config({ path: '../.inv' });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const isDevelopment = process.env.NODE_ENV !== 'production';
+const isRender = !!process.env.RENDER; // Render sets RENDER=true
+const isDevelopment = !isRender && process.env.NODE_ENV !== 'production';
 
 // Security Headers Middleware (Helmet) - DISABLED for development
 // app.use(helmet());
@@ -24,6 +25,8 @@ const corsOptions = isDevelopment ? {
             'http://localhost:3000',
             'http://127.0.0.1:3000',
             'http://192.168.137.98:3000',
+            'https://safebiteph.com',
+            'https://www.safebiteph.com',
             /^http:\/\/192\.168\.\d+\.\d+:3000$/, // Allow any 192.168.x.x:3000
             /^http:\/\/10\.\d+\.\d+\.\d+:3000$/,  // Allow any 10.x.x.x:3000
             /^http:\/\/172\.(1[6-9]|2\d|3[01])\.\d+\.\d+:3000$/ // Allow 172.16-31.x.x:3000
@@ -70,14 +73,16 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// Serve static files from client app (updated for new directory structure)
-app.use('/assets', express.static(path.join(__dirname, '../../SafeBite_Client/assets')));
-app.use('/css', express.static(path.join(__dirname, '../../SafeBite_Client/assets/css')));
-app.use('/js', express.static(path.join(__dirname, '../../SafeBite_Client/assets/js')));
-app.use('/images', express.static(path.join(__dirname, '../../SafeBite_Client/assets/images')));
-app.use('/pages', express.static(path.join(__dirname, '../../SafeBite_Client/pages')));
-// Serve root static (e.g., index.html) from client root
-app.use(express.static(path.join(__dirname, '../../SafeBite_Client')));
+// Serve static client files only in development; on Render, this directory doesn't exist
+if (isDevelopment) {
+    app.use('/assets', express.static(path.join(__dirname, '../../SafeBite_Client/assets')));
+    app.use('/css', express.static(path.join(__dirname, '../../SafeBite_Client/assets/css')));
+    app.use('/js', express.static(path.join(__dirname, '../../SafeBite_Client/assets/js')));
+    app.use('/images', express.static(path.join(__dirname, '../../SafeBite_Client/assets/images')));
+    app.use('/pages', express.static(path.join(__dirname, '../../SafeBite_Client/pages')));
+    // Serve root static (e.g., index.html) from client root
+    app.use(express.static(path.join(__dirname, '../../SafeBite_Client')));
+}
 
 // Middleware to handle file types and set proper headers
 app.use((req, res, next) => {
@@ -317,39 +322,43 @@ app.use('/api/device-management', deviceManagementRoutes);
 app.use('/api/spoilage-analytics', spoilageAnalyticsRoutes);
 app.use('/api/statistics', statisticsRoutes);
 
-// Serve frontend routes
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../SafeBite_Client/index.html'));
-});
+// Serve frontend routes (dev only). In production, redirect to public frontend domain
+if (isDevelopment) {
+    app.get('/', (req, res) => {
+        res.sendFile(path.join(__dirname, '../../SafeBite_Client/index.html'));
+    });
 
-app.get('/login', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../SafeBite_Client/pages/Login.html'));
-});
+    app.get('/login', (req, res) => {
+        res.sendFile(path.join(__dirname, '../../SafeBite_Client/pages/Login.html'));
+    });
 
-app.get('/admin-login', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../SafeBite_Client/pages/Admin-Login.html'));
-});
+    app.get('/admin-login', (req, res) => {
+        res.sendFile(path.join(__dirname, '../../SafeBite_Client/pages/Admin-Login.html'));
+    });
 
-app.get('/user-login', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../SafeBite_Client/pages/Login.html'));
-});
+    app.get('/user-login', (req, res) => {
+        res.sendFile(path.join(__dirname, '../../SafeBite_Client/pages/Login.html'));
+    });
 
+    app.get('/user-dashboard', (req, res) => {
+        res.sendFile(path.join(__dirname, '../../SafeBite_Client/pages/User-Dashboard.html'));
+    });
 
+    app.get('/admin-dashboard', (req, res) => {
+        res.sendFile(path.join(__dirname, '../../SafeBite_Client/pages/ad-dashboard.html'));
+    });
 
-app.get('/user-dashboard', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../SafeBite_Client/pages/User-Dashboard.html'));
-});
-
-app.get('/admin-dashboard', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../SafeBite_Client/pages/ad-dashboard.html'));
-});
-
-// Add more page routes as needed
-app.get('/pages/:page', (req, res) => {
-    const page = req.params.page;
-    const pagePath = path.join(__dirname, '../../SafeBite_Client/pages', page);
-    res.sendFile(pagePath);
-});
+    // Add more page routes as needed
+    app.get('/pages/:page', (req, res) => {
+        const page = req.params.page;
+        const pagePath = path.join(__dirname, '../../SafeBite_Client/pages', page);
+        res.sendFile(pagePath);
+    });
+} else {
+    app.get('/', (req, res) => {
+        res.redirect(302, 'https://safebiteph.com');
+    });
+}
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -357,10 +366,16 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: 'Something went wrong!' });
 });
 
-// Catch-all route - serve index.html for SPA routing
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../SafeBite_Client/index.html'));
-});
+// Catch-all route: dev serves SPA index, production returns 404 with hint
+if (isDevelopment) {
+    app.get('*', (req, res) => {
+        res.sendFile(path.join(__dirname, '../../SafeBite_Client/index.html'));
+    });
+} else {
+    app.get('*', (req, res) => {
+        res.status(404).json({ error: 'Not found', hint: 'Frontend is hosted at https://safebiteph.com' });
+    });
+}
 
 // 404 handler (this won't be reached due to catch-all above)
 app.use((req, res) => {
