@@ -47,7 +47,12 @@ const corsOptions = isDevelopment ? {
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 } : {
-    origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+    origin: [
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'https://safebiteph.com',
+        'https://www.safebiteph.com'
+    ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
@@ -65,12 +70,12 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// Serve static files from client app
-app.use('/frontend', express.static(path.join(__dirname, '../../SafeBite_Client/frontend')));
-app.use('/assets', express.static(path.join(__dirname, '../../SafeBite_Client/frontend/assets')));
-app.use('/css', express.static(path.join(__dirname, '../../SafeBite_Client/frontend/assets/css')));
-app.use('/js', express.static(path.join(__dirname, '../../SafeBite_Client/frontend/assets/js')));
-app.use('/images', express.static(path.join(__dirname, '../../SafeBite_Client/frontend/assets/images')));
+// Serve static files from client app (updated for new directory structure)
+app.use('/assets', express.static(path.join(__dirname, '../../SafeBite_Client/assets')));
+app.use('/css', express.static(path.join(__dirname, '../../SafeBite_Client/assets/css')));
+app.use('/js', express.static(path.join(__dirname, '../../SafeBite_Client/assets/js')));
+app.use('/images', express.static(path.join(__dirname, '../../SafeBite_Client/assets/images')));
+app.use('/pages', express.static(path.join(__dirname, '../../SafeBite_Client/pages')));
 // Serve root static (e.g., index.html) from client root
 app.use(express.static(path.join(__dirname, '../../SafeBite_Client')));
 
@@ -318,31 +323,31 @@ app.get('/', (req, res) => {
 });
 
 app.get('/login', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../SafeBite_Client/frontend/pages/Login.html'));
+    res.sendFile(path.join(__dirname, '../../SafeBite_Client/pages/Login.html'));
 });
 
 app.get('/admin-login', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../SafeBite_Client/frontend/pages/Admin-Login.html'));
+    res.sendFile(path.join(__dirname, '../../SafeBite_Client/pages/Admin-Login.html'));
 });
 
 app.get('/user-login', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../SafeBite_Client/frontend/pages/Login.html'));
+    res.sendFile(path.join(__dirname, '../../SafeBite_Client/pages/Login.html'));
 });
 
 
 
 app.get('/user-dashboard', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../SafeBite_Client/frontend/pages/User-Dashboard.html'));
+    res.sendFile(path.join(__dirname, '../../SafeBite_Client/pages/User-Dashboard.html'));
 });
 
 app.get('/admin-dashboard', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../SafeBite_Client/frontend/pages/ad-dashboard.html'));
+    res.sendFile(path.join(__dirname, '../../SafeBite_Client/pages/ad-dashboard.html'));
 });
 
 // Add more page routes as needed
 app.get('/pages/:page', (req, res) => {
     const page = req.params.page;
-    const pagePath = path.join(__dirname, '../../SafeBite_Client/frontend/pages', page);
+    const pagePath = path.join(__dirname, '../../SafeBite_Client/pages', page);
     res.sendFile(pagePath);
 });
 
