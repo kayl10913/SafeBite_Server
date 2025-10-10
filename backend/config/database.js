@@ -3,26 +3,37 @@ require('dotenv').config();
 
 class Database {
     constructor() {
-        this.host = process.env.DB_HOST || 'localhost';
-        this.db_name = process.env.DB_NAME || 'safebite';
-        this.username = process.env.DB_USER || 'root';
-        this.password = process.env.DB_PASSWORD || '';
+        this.host = process.env.DB_HOST;
+        this.db_name = process.env.DB_NAME;
+        this.username = process.env.DB_USER;
+        this.password = process.env.DB_PASSWORD;
+        this.port = parseInt(process.env.DB_PORT, 10);
+        // Enable SSL when DB_SSL=true. You can control certificate verification via DB_SSL_REJECT_UNAUTHORIZED (default true)
+        this.ssl = (process.env.DB_SSL === 'true')
+            ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' }
+            : undefined;
         this.connection = null;
     }
 
     async getConnection() {
         try {
             if (!this.connection) {
-                this.connection = await mysql.createConnection({
+                const connectionOptions = {
                     host: this.host,
+                    port: this.port,
                     user: this.username,
                     password: this.password,
                     database: this.db_name,
                     charset: 'utf8mb4',
                     timezone: '+00:00',
-                    connectTimeout: 10000,
-                    timeout: 10000
-                });
+                    connectTimeout: 10000
+                };
+
+                if (this.ssl) {
+                    connectionOptions.ssl = this.ssl;
+                }
+
+                this.connection = await mysql.createConnection(connectionOptions);
                 
                 console.log('Database connected successfully');
             }
