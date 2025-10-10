@@ -279,10 +279,13 @@ router.put('/update-profile', Auth.authenticateToken, Auth.requireAdmin, async (
     }
 });
 
-// Get recent general feedback reviews
+// Get recent general feedback reviews for today
 router.get('/recent-reviews', Auth.authenticateToken, Auth.requireAdmin, async (req, res) => {
     try {
         const { limit = 5 } = req.query;
+        
+        // Get today's date in YYYY-MM-DD format
+        const today = new Date().toISOString().split('T')[0];
         
         const reviews = await db.query(`
             SELECT 
@@ -294,9 +297,10 @@ router.get('/recent-reviews', Auth.authenticateToken, Auth.requireAdmin, async (
                 created_at
             FROM feedbacks 
             WHERE feedback_type = 'General Feedback' 
+            AND DATE(created_at) = ?
             ORDER BY created_at DESC 
             LIMIT ?
-        `, [parseInt(limit)]);
+        `, [today, parseInt(limit)]);
         
         res.json({
             success: true,
