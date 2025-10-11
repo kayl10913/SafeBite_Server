@@ -232,6 +232,41 @@ app.post('/api/newsletter', (req, res) => {
 const db = require('./config/database');
 const Auth = require('./config/auth');
 
+// Error handling utility functions
+const ErrorHandler = {
+    // Send error response with appropriate status and custom page
+    sendError: (res, status, message, customPage = null) => {
+        if (isDevelopment && customPage) {
+            return res.status(status).sendFile(path.join(__dirname, '../../SafeBite_Client/pages', customPage));
+        }
+        return res.status(status).json({ error: message, status });
+    },
+    
+    // Common error responses
+    badRequest: (res, message = 'Bad Request') => {
+        return ErrorHandler.sendError(res, 400, message, '400.html');
+    },
+    
+    unauthorized: (res, message = 'Authorization Required') => {
+        return ErrorHandler.sendError(res, 401, message, '401.html');
+    },
+    
+    forbidden: (res, message = 'Forbidden') => {
+        return ErrorHandler.sendError(res, 403, message, '403.html');
+    },
+    
+    notFound: (res, message = 'Not Found') => {
+        return ErrorHandler.sendError(res, 404, message, '404.html');
+    },
+    
+    serverError: (res, message = 'Internal Server Error') => {
+        return ErrorHandler.sendError(res, 500, message, '500.html');
+    }
+};
+
+// Make ErrorHandler available globally
+app.locals.ErrorHandler = ErrorHandler;
+
 // Routes
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/user');
@@ -354,6 +389,27 @@ if (isDevelopment) {
         const pagePath = path.join(__dirname, '../../SafeBite_Client/pages', page);
         res.sendFile(pagePath);
     });
+
+    // Error page routes for direct access
+    app.get('/error/400', (req, res) => {
+        res.status(400).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/400.html'));
+    });
+    
+    app.get('/error/401', (req, res) => {
+        res.status(401).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/401.html'));
+    });
+    
+    app.get('/error/403', (req, res) => {
+        res.status(403).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/403.html'));
+    });
+    
+    app.get('/error/404', (req, res) => {
+        res.status(404).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/404.html'));
+    });
+    
+    app.get('/error/500', (req, res) => {
+        res.status(500).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/500.html'));
+    });
 } else {
     app.get('/', (req, res) => {
         res.redirect(302, 'https://safebiteph.com');
@@ -363,12 +419,38 @@ if (isDevelopment) {
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error(err.stack);
+    
+    // Serve custom error pages in development
+    if (isDevelopment) {
+        if (err.status === 400) {
+            return res.status(400).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/400.html'));
+        }
+        if (err.status === 401) {
+            return res.status(401).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/401.html'));
+        }
+        if (err.status === 403) {
+            return res.status(403).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/403.html'));
+        }
+        if (err.status === 404) {
+            return res.status(404).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/404.html'));
+        }
+        if (err.status === 500 || !err.status) {
+            return res.status(500).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/500.html'));
+        }
+    }
+    
+    // Fallback for production or other errors
     res.status(500).json({ error: 'Something went wrong!' });
 });
 
 // Catch-all route: dev serves SPA index, production returns 404 with hint
 if (isDevelopment) {
     app.get('*', (req, res) => {
+        // Check if it's an API route that doesn't exist
+        if (req.path.startsWith('/api/')) {
+            return res.status(404).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/404.html'));
+        }
+        // For non-API routes, serve the SPA
         res.sendFile(path.join(__dirname, '../../SafeBite_Client/index.html'));
     });
 } else {
