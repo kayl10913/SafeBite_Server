@@ -78,11 +78,42 @@ router.post('/chat', Auth.authenticateToken, async (req, res) => {
             return res.status(400).json({ error: 'Missing message' });
         }
 
-        // Check if Gemini API key is configured
+        // If Gemini API key is missing, fall back to deterministic gas-emission analysis
         if (!geminiConfig.apiKey) {
-            return res.status(500).json({
-                error: 'Gemini API key is not configured. Set GEMINI_API_KEY environment variable.'
-            });
+            const { foodType, temp, humidity, gas } = req.body;
+            if (!foodType || temp === null || temp === undefined || 
+                humidity === null || humidity === undefined || 
+                gas === null || gas === undefined) {
+                return res.status(400).json({
+                    error: 'Missing required fields: foodType, temp, humidity, gas'
+                });
+            }
+
+            const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+            const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(gas);
+
+            const analysis = {
+                riskLevel: gasAnalysis.riskLevel === 'high' ? 'High' : gasAnalysis.riskLevel === 'medium' ? 'Medium' : 'Low',
+                riskScore: gasAnalysis.probability,
+                summary: gasAnalysis.recommendation,
+                keyFactors: ['Gas emission analysis', 'Sensor readings'],
+                recommendations: {
+                    main: gasAnalysis.recommendation,
+                    details: [
+                        'Monitor gas levels closely',
+                        'Check for visible signs of spoilage',
+                        'Verify sensor readings are accurate'
+                    ]
+                },
+                estimatedShelfLifeHours: gasAnalysis.riskLevel === 'high' ? 0 : gasAnalysis.riskLevel === 'medium' ? 12 : 48,
+                notes: 'Gemini disabled – using gas-emission analysis.',
+                spoilage_status: gasAnalysis.riskLevel === 'high' ? 'unsafe' : gasAnalysis.riskLevel === 'medium' ? 'caution' : 'safe'
+            };
+
+            try {
+                await Auth.logActivity(req.user.user_id, `AI analysis (fallback) for ${foodType}`, db);
+            } catch {}
+            return res.json({ analysis });
         }
 
         const userMessage = trim(message);
@@ -111,6 +142,11 @@ router.post('/chat', Auth.authenticateToken, async (req, res) => {
             + 'If a request is out of scope (math, general knowledge, unrelated advice), respond with: "Sorry, I can only help with food spoilage and sensor analysis. Try asking about temperature, humidity, gas levels, storage, or shelf-life." Do not provide an out-of-scope answer. '
             + 'Use the provided sensor data context when relevant. Be concise (<=6 sentences), practical, and actionable. '
             + 'Answer in the same language as the user message. If the user uses inappropriate language, reply: "Sorry, I cannot answer that."';
+            + 'If are a Filipino and you should answer in Filipino. if the user is not Filipino, you should answer in english.';
+            + 'if the user say hi, hello, or anything related to greeting, you should answer politely and in english.';
+            + 'if the user say goodbye, thank you, or anything related to goodbye, you should answer politely and in english.';
+            + 'if ther user say kamusta, or anything related to filipino greeting, you should answer politely and in filipino.';
+            + 'if the user say paalam of anything related to filipino goodbye, you should answer politely and in filipino.';
 
         // Build prompt parts
         const promptParts = [];
@@ -137,21 +173,28 @@ router.post('/chat', Auth.authenticateToken, async (req, res) => {
 
         // Make request to Gemini API
         const url = `${geminiConfig.baseUrl}/${geminiConfig.model}:generateContent?key=${encodeURIComponent(geminiConfig.apiKey)}`;
-        const response = await fetch(url, {
+        let response;
+        try {
+            response = await fetch(url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify(payload)
-        });
+            });
+        } catch (networkErr) {
+            // Network error – fall back
+            const fallback = await generateAIResponse(userMessage, contextString ? ` ${contextString}` : '');
+            try { await Auth.logActivity(userId, 'AI chat (fallback: network)', db); } catch {}
+            return res.json({ reply: fallback, raw: { _mode: 'fallback', reason: 'network error' } });
+        }
 
         if (!response.ok) {
+            // API returned error – fall back instead of propagating error to client
             const errorData = await response.json().catch(() => ({}));
-            return res.status(response.status).json({
-                error: 'Gemini API error',
-                status: response.status,
-                details: errorData
-            });
+            const fallback = await generateAIResponse(userMessage, contextString ? ` ${contextString}` : '');
+            try { await Auth.logActivity(userId, 'AI chat (fallback: api error)', db); } catch {}
+            return res.json({ reply: fallback, raw: { _mode: 'fallback', reason: 'Gemini API error', details: errorData } });
         }
 
         const json = await response.json();
@@ -382,6 +425,25 @@ async function generateAIResponse(userMessage, sensorContext) {
     const message = userMessage.toLowerCase();
     let response = '';
 
+  // Friendly handling for greetings, thanks, and farewells (EN + Filipino)
+  const isGreeting = /(\bhi\b|\bhello\b|\bhey\b|\bgood\s*(morning|afternoon|evening)\b|how are you|how's it going)/i.test(userMessage);
+  const isThankYou = /(thank you|thanks|salamat)/i.test(userMessage);
+  const isGoodbye = /(goodbye|bye|see you|paalam)/i.test(userMessage);
+  const isFilipinoGreeting = /(kamusta|kumusta)/i.test(userMessage);
+
+  if (isFilipinoGreeting) {
+      return 'Kamusta! Makakatulong ako tungkol sa food spoilage at sensor analysis. Maaari kang magtanong tungkol sa temperatura, humidity, gas level, storage, o shelf-life.';
+  }
+  if (isGreeting) {
+      return 'Hi! I can help with food spoilage and sensor analysis. Ask about temperature, humidity, gas levels, storage, or shelf-life.';
+  }
+  if (isThankYou) {
+      return 'You’re welcome! If you have sensor readings, I can help interpret them.';
+  }
+  if (isGoodbye) {
+      return 'Take care! Keep food stored at safe temperatures and monitor gas levels.';
+  }
+
     if (message.includes('temperature') || message.includes('temp')) {
         response = 'Temperature is a critical factor in food safety. Most foods should be stored below 4°C (40°F) to prevent bacterial growth.';
         if (sensorContext) {
@@ -408,11 +470,15 @@ async function generateAIResponse(userMessage, sensorContext) {
 // POST JSON: { foodType: string, temp: number, humidity: number, gas: number }
 router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
     try {
-        // Check if Gemini API key is configured
+        // If Gemini API key is missing, return a simple rule-based response instead of 500
         if (!geminiConfig.apiKey) {
-            return res.status(500).json({
-                error: 'Gemini API key is not configured. Set GEMINI_API_KEY environment variable.'
-            });
+            const ctx = context && typeof context === 'object' ? context : {};
+            const sensorCtx = (ctx.foodType || ctx.temp || ctx.humidity || ctx.gas)
+                ? ` Current sensor data -> ${[ctx.foodType?`Food Type: ${ctx.foodType}`:'', ctx.temp!==''&&ctx.temp!==undefined?`Temperature (°C): ${ctx.temp}`:'', ctx.humidity!==''&&ctx.humidity!==undefined?`Humidity (%): ${ctx.humidity}`:'', ctx.gas!==''&&ctx.gas!==undefined?`Gas Level: ${ctx.gas}`:''].filter(Boolean).join(' | ')}`
+                : '';
+            const reply = await generateAIResponse(String(message || ''), sensorCtx);
+            try { await Auth.logActivity(userId, 'AI chat (fallback)', db); } catch {}
+            return res.json({ reply, raw: { _mode: 'fallback', reason: 'GEMINI_API_KEY missing' } });
         }
 
         const { foodType, temp, humidity, gas } = req.body;

@@ -22,14 +22,27 @@ const corsOptions = isDevelopment ? {
         
         // Allow localhost and network IPs in development
         const allowedOrigins = [
+            // Common localhost ports
             'http://localhost:3000',
             'http://127.0.0.1:3000',
+            'http://localhost:8080',
+            'http://127.0.0.1:8080',
+            'http://localhost:5500',
+            'http://127.0.0.1:5500',
+            // Specific LAN dev IPs
             'http://192.168.137.98:3000',
+            // Production domains
             'https://safebiteph.com',
             'https://www.safebiteph.com',
-            /^http:\/\/192\.168\.\d+\.\d+:3000$/, // Allow any 192.168.x.x:3000
-            /^http:\/\/10\.\d+\.\d+\.\d+:3000$/,  // Allow any 10.x.x.x:3000
-            /^http:\/\/172\.(1[6-9]|2\d|3[01])\.\d+\.\d+:3000$/ // Allow 172.16-31.x.x:3000
+            // Regex: allow localhost/127.0.0.1 on any port in dev
+            /^http:\/\/localhost:\d+$/,
+            /^http:\/\/127\.0\.0\.1:\d+$/,
+            // Allow any 192.168.x.x:3000
+            /^http:\/\/192\.168\.\d+\.\d+:3000$/,
+            // Allow any 10.x.x.x:3000
+            /^http:\/\/10\.\d+\.\d+\.\d+:3000$/,
+            // Allow 172.16-31.x.x:3000
+            /^http:\/\/172\.(1[6-9]|2\d|3[01])\.\d+\.\d+:3000$/
         ];
         
         const isAllowed = allowedOrigins.some(allowedOrigin => {
