@@ -27,37 +27,24 @@ const corsOptions = isDevelopment ? {
             'http://localhost:3001',
             'http://localhost:8080',
             'http://127.0.0.1:3000',
-<<<<<<< HEAD
             'http://127.0.0.1:3001',
-            'http://127.0.0.1:8080',
-=======
-            'http://localhost:8080',
             'http://127.0.0.1:8080',
             'http://localhost:5500',
             'http://127.0.0.1:5500',
             // Specific LAN dev IPs
->>>>>>> 1542641766cb6ce8a2477a088543b87c65f2f83e
             'http://192.168.137.98:3000',
             // Production domains
             'https://safebiteph.com',
             'https://www.safebiteph.com',
-<<<<<<< HEAD
+            // Regex: allow localhost/127.0.0.1 on any port in dev
             /^http:\/\/localhost:\d+$/, // Allow any localhost port
             /^http:\/\/127\.0\.0\.1:\d+$/, // Allow any 127.0.0.1 port
-            /^http:\/\/192\.168\.\d+\.\d+:3000$/, // Allow any 192.168.x.x:3000
-            /^http:\/\/10\.\d+\.\d+\.\d+:3000$/,  // Allow any 10.x.x.x:3000
-            /^http:\/\/172\.(1[6-9]|2\d|3[01])\.\d+\.\d+:3000$/ // Allow 172.16-31.x.x:3000
-=======
-            // Regex: allow localhost/127.0.0.1 on any port in dev
-            /^http:\/\/localhost:\d+$/,
-            /^http:\/\/127\.0\.0\.1:\d+$/,
             // Allow any 192.168.x.x:3000
             /^http:\/\/192\.168\.\d+\.\d+:3000$/,
             // Allow any 10.x.x.x:3000
             /^http:\/\/10\.\d+\.\d+\.\d+:3000$/,
             // Allow 172.16-31.x.x:3000
             /^http:\/\/172\.(1[6-9]|2\d|3[01])\.\d+\.\d+:3000$/
->>>>>>> 1542641766cb6ce8a2477a088543b87c65f2f83e
         ];
         
         const isAllowed = allowedOrigins.some(allowedOrigin => {
