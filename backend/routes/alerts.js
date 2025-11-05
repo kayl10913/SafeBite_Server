@@ -3,6 +3,35 @@ const router = express.Router();
 const Auth = require('../config/auth');
 const db = require('../config/database');
 const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+const EmailService = require('../config/email');
+
+// Email throttling helper: avoid duplicate emails for same user/food/type/level within window
+async function shouldSendSpoilageEmail(db, {
+    user_id,
+    food_id,
+    alert_type,
+    alert_level
+}) {
+    try {
+        const minutes = parseInt(process.env.EMAIL_THROTTLE_MINUTES || '30', 10);
+        const rows = await db.query(
+            `SELECT alert_id FROM alerts
+             WHERE user_id = ?
+               AND (food_id <=> ?)
+               AND alert_type = ?
+               AND alert_level = ?
+               AND timestamp >= (NOW() - INTERVAL ? MINUTE)
+             ORDER BY timestamp DESC
+             LIMIT 1`,
+            [user_id, food_id || null, alert_type, alert_level, minutes]
+        );
+        // If there is a recent similar alert, skip sending another email
+        return !(Array.isArray(rows) && rows.length > 0);
+    } catch (_) {
+        // On any error, fail open: allow sending
+        return true;
+    }
+}
 
 // POST /api/alerts - Create a new alert
 router.post('/', Auth.authenticateToken, async (req, res) => {
@@ -79,6 +108,51 @@ router.post('/', Auth.authenticateToken, async (req, res) => {
         // Log activity
         await db.query('INSERT INTO activity_logs (user_id, action) VALUES (?, ?)', [user_id, `Created ${alert_level} alert: ${message}`]);
 
+        // Attempt to send email notification for medium/high severity
+        try {
+            if (String(alert_level).toLowerCase() !== 'low') {
+                const canSend = await shouldSendSpoilageEmail(db, {
+                    user_id,
+                    food_id: foodIdFinal,
+                    alert_type: normalizedType,
+                    alert_level
+                });
+                if (!canSend) {
+                    // Throttled: skip email
+                } else {
+                const userRows = await db.query('SELECT first_name, last_name, email FROM users WHERE user_id = ? LIMIT 1', [user_id]);
+                const user = Array.isArray(userRows) ? userRows[0] : null;
+                if (user && user.email) {
+                    let foodName = null;
+                    if (foodIdFinal) {
+                        const fi = await db.query('SELECT name FROM food_items WHERE food_id = ? LIMIT 1', [foodIdFinal]);
+                        if (Array.isArray(fi) && fi.length > 0) foodName = fi[0].name;
+                    }
+                    // Parse alert_data for sensor readings
+                    let readings = null;
+                    try {
+                        const data = typeof alert_data === 'string' ? JSON.parse(alert_data) : (alert_data || {});
+                        readings = data && data.sensor_readings ? data.sensor_readings : null;
+                    } catch (_) {}
+
+                    await EmailService.sendSpoilageAlertEmail(
+                        user.email,
+                        `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'User',
+                        {
+                            foodName,
+                            alertLevel: alert_level,
+                            alertType: normalizedType,
+                            probability: spoilage_probability,
+                            recommendation: recommended_action,
+                            message,
+                            sensorReadings: readings
+                        }
+                    );
+                }
+                }
+            }
+        } catch (_) { }
+
         res.json({ 
             success: true, 
             message: 'Alert created successfully',
@@ -142,6 +216,50 @@ router.post('/scanner', async (req, res) => {
 
         // Also log activity
         try { await db.query('INSERT INTO activity_logs (user_id, action) VALUES (?, ?)', [uid, `Created ${alert_level} scanner alert: ${message}`]); } catch (_) {}
+
+        // Send email notification for scanner alerts (medium/high)
+        try {
+            if (String(alert_level).toLowerCase() !== 'low') {
+                const canSend = await shouldSendSpoilageEmail(db, {
+                    user_id: uid,
+                    food_id,
+                    alert_type: alert_type,
+                    alert_level
+                });
+                if (!canSend) {
+                    // Throttled: skip email
+                } else {
+                const userRows = await db.query('SELECT first_name, last_name, email FROM users WHERE user_id = ? LIMIT 1', [uid]);
+                const user = Array.isArray(userRows) ? userRows[0] : null;
+                if (user && user.email) {
+                    let foodName = null;
+                    if (food_id) {
+                        const fi = await db.query('SELECT name FROM food_items WHERE food_id = ? LIMIT 1', [food_id]);
+                        if (Array.isArray(fi) && fi.length > 0) foodName = fi[0].name;
+                    }
+                    let readings = null;
+                    try {
+                        const data = typeof alert_data === 'string' ? JSON.parse(alert_data) : (alert_data || {});
+                        readings = data && data.sensor_readings ? data.sensor_readings : null;
+                    } catch (_) {}
+
+                    await EmailService.sendSpoilageAlertEmail(
+                        user.email,
+                        `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'User',
+                        {
+                            foodName,
+                            alertLevel: alert_level,
+                            alertType: alert_type,
+                            probability: spoilage_probability,
+                            recommendation: recommended_action,
+                            message,
+                            sensorReadings: readings
+                        }
+                    );
+                }
+                }
+            }
+        } catch (_) { }
 
         return res.json({ success: true, data: { alert_id: result.insertId } });
     } catch (error) {
@@ -256,6 +374,39 @@ router.delete('/:id', Auth.authenticateToken, async (req, res) => {
     } catch (error) {
         console.error('Error deleting alert:', error);
         res.status(500).json({ success: false, error: 'Database error deleting alert.' });
+    }
+});
+
+// DEV-ONLY: Send a test spoilage alert email to a specified address
+router.post('/test-email', async (req, res) => {
+    try {
+        if (process.env.NODE_ENV === 'production') {
+            return res.status(403).json({ success: false, error: 'Disabled in production' });
+        }
+
+        const { email, food_name, alert_level = 'High' } = req.body || {};
+        if (!email) {
+            return res.status(400).json({ success: false, error: 'email is required' });
+        }
+
+        const result = await EmailService.sendSpoilageAlertEmail(
+            email,
+            'SafeBite User',
+            {
+                foodName: food_name || 'Chicken Breast',
+                alertLevel: alert_level,
+                alertType: 'test',
+                probability: 92,
+                recommendation: 'Discard immediately and sanitize storage area.',
+                message: 'Test: Unsafe spoilage detected by SafeBite.',
+                sensorReadings: { temperature: 14.2, humidity: 68, gas_level: 720 }
+            }
+        );
+
+        return res.json({ success: true, message: 'Test email requested', detail: result });
+    } catch (error) {
+        console.error('Error sending test email:', error);
+        return res.status(500).json({ success: false, error: 'Failed to send test email', detail: error.message });
     }
 });
 

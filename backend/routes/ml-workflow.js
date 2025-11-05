@@ -3,6 +3,31 @@ const router = express.Router();
 const Auth = require('../config/auth');
 const db = require('../config/database');
 const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+const EmailService = require('../config/email');
+
+// Local helper duplicated from alerts route to avoid import cycles
+async function shouldSendSpoilageEmail(db, {
+    user_id,
+    food_id,
+    alert_type,
+    alert_level
+}) {
+    try {
+        const minutes = parseInt(process.env.EMAIL_THROTTLE_MINUTES || '30', 10);
+        const rows = await db.query(
+            `SELECT alert_id FROM alerts
+             WHERE user_id = ?
+               AND (food_id <=> ?)
+               AND alert_type = ?
+               AND alert_level = ?
+               AND timestamp >= (NOW() - INTERVAL ? MINUTE)
+             ORDER BY timestamp DESC
+             LIMIT 1`,
+            [user_id, food_id || null, 'ml_prediction', alert_level, minutes]
+        );
+        return !(Array.isArray(rows) && rows.length > 0);
+    } catch (_) { return true; }
+}
 const { generateContent } = require('../utils/geminiClient');
 const geminiConfig = require('../config/gemini');
 
@@ -917,7 +942,7 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
                     prediction_id: result.insertId,
                     timestamp: new Date().toISOString()
                 });
-                await db.query(
+                const insertAlertResult = await db.query(
                     `INSERT INTO alerts 
                     (user_id, food_id, message, alert_level, alert_type, ml_prediction_id, spoilage_probability, recommended_action, is_ml_generated, confidence_score, alert_data)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -935,6 +960,48 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
                         alertData
                     ]
                 );
+
+                // Send spoilage email (medium/high only) with throttling
+                try {
+                    if (String(alertLevel).toLowerCase() !== 'low') {
+                        const canSend = await shouldSendSpoilageEmail(db, {
+                            user_id,
+                            food_id: food_id || null,
+                            alert_type: 'ml_prediction',
+                            alert_level: alertLevel
+                        });
+                        if (!canSend) {
+                            // Throttled: skip email
+                        } else {
+                        const userRows = await db.query('SELECT first_name, last_name, email FROM users WHERE user_id = ? LIMIT 1', [user_id]);
+                        const user = Array.isArray(userRows) ? userRows[0] : null;
+                        if (user && user.email) {
+                            let foodNameResolved = food_name;
+                            if (!foodNameResolved && food_id) {
+                                const fi = await db.query('SELECT name FROM food_items WHERE food_id = ? LIMIT 1', [food_id]);
+                                if (Array.isArray(fi) && fi.length > 0) foodNameResolved = fi[0].name;
+                            }
+                            await EmailService.sendSpoilageAlertEmail(
+                                user.email,
+                                `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'User',
+                                {
+                                    foodName: foodNameResolved,
+                                    alertLevel,
+                                    alertType: 'ml_prediction',
+                                    probability: finalProbability,
+                                    recommendation: recommendedAction,
+                                    message: `ML Prediction: ${foodNameResolved || food_name || 'Food item'} may be ${finalStatus} (${finalProbability}%)`,
+                                    sensorReadings: {
+                                        temperature: finalTemperature,
+                                        humidity: finalHumidity,
+                                        gas_level: finalGasLevel
+                                    }
+                                }
+                            );
+                        }
+                        }
+                    }
+                } catch (_) { }
             } catch (alertError) {
                 console.warn('Could not create alert:', alertError.message);
             }

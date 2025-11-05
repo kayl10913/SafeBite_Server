@@ -316,6 +316,71 @@ class EmailService {
             };
         }
     }
+
+    async sendSpoilageAlertEmail(email, userName = 'User', {
+        foodName,
+        alertLevel = 'Medium',
+        alertType = 'spoilage',
+        probability,
+        recommendation,
+        message,
+        sensorReadings
+    } = {}) {
+        try {
+            if (!this.transporter) {
+                console.log(`📧 [DEV MODE] Spoilage alert email would be sent to: ${email}`);
+                console.log({ foodName, alertLevel, alertType, probability, recommendation, message, sensorReadings });
+                return { success: true, message: 'Spoilage alert logged to console (development mode)' };
+            }
+
+            const subject = `SafeBite • ${foodName ? foodName + ' • ' : ''}${String(alertLevel).toUpperCase()} Spoilage Risk`;
+            const severityColor = alertLevel === 'High' ? '#dc3545' : (alertLevel === 'Medium' ? '#ffc107' : '#4a9eff');
+            const statusEmoji = alertLevel === 'High' ? '🚨' : (alertLevel === 'Medium' ? '⚠️' : 'ℹ️');
+            const frontendBase = process.env.FRONTEND_BASE_URL || 'https://safebiteph.com';
+            const dashboardUrl = `${frontendBase.replace(/\/$/, '')}/user-dashboard`;
+
+            const readingsHtml = sensorReadings ? `
+                <ul style="color: #34495e; line-height: 1.6;">
+                    ${sensorReadings.temperature !== undefined ? `<li>Temperature: <strong>${sensorReadings.temperature}°C</strong></li>` : ''}
+                    ${sensorReadings.humidity !== undefined ? `<li>Humidity: <strong>${sensorReadings.humidity}%</strong></li>` : ''}
+                    ${sensorReadings.gas_level !== undefined ? `<li>Gas Level: <strong>${sensorReadings.gas_level} ppm</strong></li>` : ''}
+                </ul>
+            ` : '';
+
+            const mailOptions = {
+                from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+                to: email,
+                subject,
+                html: `
+                    <div style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; max-width: 680px; margin: 0 auto; padding: 24px; background: #f5f7fb;\">
+                        <div style=\"background: #0f172a; color: #e2e8f0; border-radius: 16px; padding: 24px; text-align: center; margin-bottom: 16px;\">
+                            <div style=\"font-size: 22px; font-weight: 800; letter-spacing: .2px;\">SafeBite</div>
+                            <div style=\"opacity:.8; font-size: 13px; margin-top: 6px;\">Food Safety Monitoring</div>
+                        </div>
+                        <div style=\"background: #ffffff; padding: 24px; border-radius: 16px; border: 1px solid #e6e8ee; box-shadow: 0 1px 2px rgba(15, 23, 42, .04);\">
+                            <h2 style=\"margin: 0 0 8px; color: #0f172a; font-size: 20px;\">${statusEmoji} ${alertLevel} spoilage risk detected</h2>
+                            <p style=\"color: #334155; line-height: 1.6; margin: 0 0 12px;\">Hello ${userName},</p>
+                            <p style=\"color: #334155; line-height: 1.6; margin: 0 0 12px;\">${message || 'Our sensors and models detected a potential spoilage risk.'}</p>
+                            ${foodName ? `<p style=\\\"color:#0f172a; font-weight:600; margin: 0 0 12px;\\\">Food Item: ${foodName}</p>` : ''}
+                            ${probability !== undefined ? `<p style=\\\"color:#334155; margin: 0 0 12px;\\\">Estimated Probability: <strong>${probability}%</strong></p>` : ''}
+                            ${readingsHtml}
+                            ${recommendation ? `<div style=\\\"margin-top: 12px; padding: 14px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;\\\">\n                                <div style=\\\"color:#0f172a; font-weight:700; margin-bottom:6px;\\\">Recommended Action</div>\n                                <div style=\\\"color:#334155;\\\">${recommendation}</div>\n                            </div>` : ''}
+                            <div style=\"margin-top: 18px;\">
+                                <a href=\"${dashboardUrl}\" style=\"display:inline-block; background:${severityColor}; color:#0f172a; text-decoration:none; font-weight:700; padding: 10px 16px; border-radius: 10px; border: 1px solid rgba(15,23,42,.12);\">Open Dashboard</a>
+                            </div>
+                        </div>
+                        <div style=\"text-align:center; color:#64748b; font-size:12px; margin-top: 12px;\">This is an automated notification from SafeBite.</div>
+                    </div>
+                `
+            };
+
+            const result = await this.transporter.sendMail(mailOptions);
+            return { success: true, message: 'Spoilage alert email sent', messageId: result.messageId };
+        } catch (error) {
+            console.error('📧 Spoilage alert email failed:', error);
+            return { success: false, message: 'Failed to send spoilage alert email', error: error.message };
+        }
+    }
 }
 
 module.exports = new EmailService();
