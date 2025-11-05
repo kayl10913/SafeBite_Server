@@ -2,6 +2,209 @@ const express = require('express');
 const router = express.Router();
 const Auth = require('../config/auth');
 const db = require('../config/database');
+const { generateContent } = require('../utils/geminiClient');
+const geminiConfig = require('../config/gemini');
+
+// AI Text-to-JSON converter for environmental factors
+router.post('/format-env-factors', Auth.authenticateToken, async (req, res) => {
+    try {
+        const { text, currentData } = req.body;
+        
+        if (!text || typeof text !== 'string') {
+            return res.status(400).json({
+                success: false,
+                message: 'Text is required'
+            });
+        }
+
+        // Check if it's already valid JSON
+        try {
+            const parsed = JSON.parse(text.trim());
+            return res.json({
+                success: true,
+                json: JSON.stringify(parsed, null, 2),
+                wasAlreadyJson: true
+            });
+        } catch (e) {
+            // Not valid JSON, continue to AI formatting
+        }
+
+        // Check if Gemini API is configured
+        if (!geminiConfig.apiKey) {
+            return res.status(503).json({
+                success: false,
+                message: 'AI service is not configured'
+            });
+        }
+
+        // Build context from current data
+        let contextInfo = '';
+        if (currentData) {
+            contextInfo = '\n\nCurrent sensor/form data to include:';
+            if (currentData.temperature) contextInfo += `\n- Temperature: ${currentData.temperature}°C`;
+            if (currentData.humidity) contextInfo += `\n- Humidity: ${currentData.humidity}%`;
+            if (currentData.gas_level) contextInfo += `\n- Gas Level: ${currentData.gas_level} ppm`;
+            if (currentData.food_name) contextInfo += `\n- Food Name: ${currentData.food_name}`;
+            if (currentData.actual_status) contextInfo += `\n- Status: ${currentData.actual_status}`;
+            contextInfo += '\n\nINCLUDE these values in your JSON output within a "storage_conditions" object with a current timestamp.';
+        }
+
+        // Calculate gas emission analysis if sensor data is available
+        let gasAnalysisInfo = '';
+        let statusOverride = '';
+        if (currentData && currentData.gas_level !== undefined) {
+            const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+            const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(Number(currentData.gas_level));
+            
+            gasAnalysisInfo = `\n\nGas Emission Analysis (auto-calculated from sensor):
+- Risk Level: ${gasAnalysis.riskLevel}
+- Status: ${gasAnalysis.status}
+- Probability: ${gasAnalysis.probability}%
+- Recommendation: ${gasAnalysis.recommendation}`;
+            
+            // If actual status differs from gas analysis status, adjust recommendation
+            if (currentData.actual_status && currentData.actual_status !== gasAnalysis.status) {
+                statusOverride = `\n\n⚠️ IMPORTANT: The provided status "${currentData.actual_status}" differs from the gas sensor status "${gasAnalysis.status}". 
+Adjust the recommendation to match the "${currentData.actual_status}" status while incorporating the gas analysis data.`;
+            }
+            
+            gasAnalysisInfo += '\n\nIMPORTANT: Include this complete gas_emission_analysis object in your JSON output.';
+            if (statusOverride) {
+                gasAnalysisInfo += statusOverride;
+            }
+        }
+        
+        // Use AI to convert text to JSON
+        const prompt = `Convert the following user input into a valid JSON object for food environmental factors. 
+Extract meaningful information and structure it properly based on the user's description.
+
+Your JSON output MUST include:
+1. User observations as "observations" or "notes" field
+2. "storage_location": "box container" (always set this)
+3. If sensor data is provided, include it in "storage_conditions" object with current timestamp${contextInfo}${gasAnalysisInfo}
+
+User input: "${text}"
+
+Return ONLY a valid JSON object with these fields, nothing else. No markdown, no explanations.`;
+
+
+        const aiResponse = await generateContent([{ text: prompt }], {
+            temperature: 0.3,
+            maxOutputTokens: 500
+        });
+
+        // Debug: Log the full response structure
+        console.log('🔍 Full AI Response:', JSON.stringify(aiResponse, null, 2));
+
+        // Extract text from Gemini response structure
+        let responseText = '';
+        
+        // Try multiple possible response structures
+        if (aiResponse) {
+            // Structure 1: candidates[0].content.parts[0].text
+            if (aiResponse.candidates && aiResponse.candidates[0] && 
+                aiResponse.candidates[0].content && aiResponse.candidates[0].content.parts && 
+                aiResponse.candidates[0].content.parts[0] && aiResponse.candidates[0].content.parts[0].text) {
+                responseText = aiResponse.candidates[0].content.parts[0].text.trim();
+            }
+            // Structure 2: text property directly
+            else if (aiResponse.text) {
+                responseText = aiResponse.text.trim();
+            }
+            // Structure 3: candidates[0].text
+            else if (aiResponse.candidates && aiResponse.candidates[0] && aiResponse.candidates[0].text) {
+                responseText = aiResponse.candidates[0].text.trim();
+            }
+        }
+
+        console.log('📝 Extracted text:', responseText);
+
+        if (!responseText) {
+            console.error('❌ Could not extract text from AI response');
+            throw new Error('AI did not return a valid response');
+        }
+
+        // Extract JSON from AI response
+        let jsonText = responseText;
+        
+        // Remove markdown code blocks if present
+        jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+        
+        // Try to parse to validate
+        let parsedJson = JSON.parse(jsonText);
+        
+        // Ensure storage_location is set
+        if (!parsedJson.storage_location) {
+            parsedJson.storage_location = "box container";
+        }
+        
+        // Add gas emission analysis if sensor data was provided
+        if (currentData && currentData.gas_level !== undefined) {
+            const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+            const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(Number(currentData.gas_level));
+            
+            // Only add gas emission analysis if AI didn't provide it
+            if (!parsedJson.gas_emission_analysis) {
+                parsedJson.gas_emission_analysis = {
+                    risk_level: gasAnalysis.riskLevel,
+                    status: gasAnalysis.status,
+                    probability: gasAnalysis.probability,
+                    recommendation: gasAnalysis.recommendation
+                };
+            }
+            
+            // Add storage conditions with current sensor data
+            if (currentData.temperature !== undefined || currentData.humidity !== undefined) {
+                parsedJson.storage_conditions = {
+                    temperature: currentData.temperature ? Number(currentData.temperature) : undefined,
+                    humidity: currentData.humidity ? Number(currentData.humidity) : undefined,
+                    gas_level: Number(currentData.gas_level),
+                    timestamp: new Date().toISOString()
+                };
+            }
+            
+            // Add AI analysis metadata
+            parsedJson.ai_analysis = true;
+            parsedJson.confidence = gasAnalysis.probability;
+            parsedJson.provided_status = currentData.actual_status || gasAnalysis.status;
+            parsedJson.gas_emission_override = true;
+            parsedJson.timestamp = new Date().toISOString();
+            
+            // If provided_status differs from gas analysis, override gas_emission_analysis
+            if (currentData.actual_status && parsedJson.gas_emission_analysis && currentData.actual_status !== gasAnalysis.status) {
+                const providedStatus = currentData.actual_status.toLowerCase();
+                const riskMapping = {
+                    'safe': 'low',
+                    'caution': 'medium',
+                    'unsafe': 'high'
+                };
+                const recommendationMapping = {
+                    'safe': 'Safe to consume. Store properly to maintain freshness.',
+                    'caution': 'Exercise caution. Inspect thoroughly before consuming. May have minor spoilage signs.',
+                    'unsafe': 'Do not consume. Dispose safely. Food shows clear signs of spoilage.'
+                };
+                
+                parsedJson.gas_emission_analysis.risk_level = riskMapping[providedStatus] || gasAnalysis.riskLevel;
+                parsedJson.gas_emission_analysis.status = providedStatus;
+                parsedJson.gas_emission_analysis.recommendation = recommendationMapping[providedStatus] || gasAnalysis.recommendation;
+            }
+        }
+        
+        return res.json({
+            success: true,
+            json: JSON.stringify(parsedJson, null, 2),
+            wasAlreadyJson: false
+        });
+
+    } catch (error) {
+        console.error('Error formatting environmental factors:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to format text. Please ensure input is meaningful.',
+            error: error.message
+        });
+    }
+});
 
 // Add ML training data (alias to match frontend: /api/ml-training/add)
 router.post('/add', Auth.authenticateToken, async (req, res) => {
@@ -69,6 +272,223 @@ router.post('/add', Auth.authenticateToken, async (req, res) => {
         }
         const qualityToUse = (quality_score == null || Number.isNaN(Number(quality_score))) ? 1.0 : Math.max(0, Math.min(1, Number(quality_score)));
 
+        // Parse and validate environmental_factors
+        let parsedEnvFactors = {};
+        if (environmental_factors) {
+            if (typeof environmental_factors === 'string') {
+                const trimmed = environmental_factors.trim();
+                if (trimmed) {
+                    try {
+                        parsedEnvFactors = JSON.parse(trimmed);
+                    } catch (jsonError) {
+                        console.warn('Invalid JSON in environmental_factors, attempting AI conversion:', jsonError.message);
+                        
+                        // Try to use AI to convert text to JSON with full sensor data
+                        if (geminiConfig.apiKey) {
+                            try {
+                                // Build context from current data
+                                let contextInfo = '\n\nCurrent sensor/form data to include:';
+                                contextInfo += `\n- Temperature: ${temperature}°C`;
+                                contextInfo += `\n- Humidity: ${humidity}%`;
+                                contextInfo += `\n- Gas Level: ${gas_level} ppm`;
+                                if (food_name) contextInfo += `\n- Food Name: ${food_name}`;
+                                contextInfo += `\n- Status: ${actual_status}`;
+                                contextInfo += '\n\nINCLUDE these values in your JSON output within a "storage_conditions" object with a current timestamp.';
+                                
+                                let gasAnalysisInfo = `\n\nGas Emission Analysis (auto-calculated from sensor):
+- Risk Level: ${gasAnalysis.riskLevel}
+- Status: ${gasAnalysis.status}
+- Probability: ${gasAnalysis.probability}%
+- Recommendation: ${gasAnalysis.recommendation}`;
+                                
+                                // If actual status differs from gas analysis status, adjust recommendation
+                                if (actual_status && actual_status !== gasAnalysis.status) {
+                                    gasAnalysisInfo += `\n\n⚠️ IMPORTANT: The provided status "${actual_status}" differs from the gas sensor status "${gasAnalysis.status}". 
+Adjust the recommendation to match the "${actual_status}" status while incorporating the gas analysis data.`;
+                                }
+                                
+                                gasAnalysisInfo += '\n\nIMPORTANT: Include this complete gas_emission_analysis object in your JSON output.';
+                                
+                                const aiPrompt = `Convert the following user input into a valid JSON object for food environmental factors. 
+Extract meaningful information and structure it properly based on the user's description.
+
+Your JSON output MUST include:
+1. User observations as "observations" or "notes" field
+2. "storage_location": "box container" (always set this)
+3. If sensor data is provided, include it in "storage_conditions" object with current timestamp${contextInfo}${gasAnalysisInfo}
+
+User input: "${trimmed}"
+
+Return ONLY a valid JSON object with these fields, nothing else. No markdown, no explanations.`;
+                                
+                                const aiResponse = await generateContent([{ text: aiPrompt }], {
+                                    temperature: 0.3,
+                                    maxOutputTokens: 500
+                                });
+                                
+                                console.log('🔍 Full AI Response:', JSON.stringify(aiResponse, null, 2));
+                                
+                                // Extract text from Gemini response structure (try multiple formats)
+                                let responseText = '';
+                                if (aiResponse) {
+                                    // Try structure 1: candidates[0].content.parts[0].text
+                                    if (aiResponse.candidates && aiResponse.candidates[0] && 
+                                        aiResponse.candidates[0].content && aiResponse.candidates[0].content.parts && 
+                                        aiResponse.candidates[0].content.parts[0] && aiResponse.candidates[0].content.parts[0].text) {
+                                        responseText = aiResponse.candidates[0].content.parts[0].text.trim();
+                                    }
+                                    // Try structure 2: text property directly
+                                    else if (aiResponse.text) {
+                                        responseText = aiResponse.text.trim();
+                                    }
+                                    // Try structure 3: candidates[0].text
+                                    else if (aiResponse.candidates && aiResponse.candidates[0] && aiResponse.candidates[0].text) {
+                                        responseText = aiResponse.candidates[0].text.trim();
+                                    }
+                                }
+                                
+                                console.log('📝 Extracted text:', responseText);
+                                
+                                if (responseText) {
+                                    let jsonText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+                                    parsedEnvFactors = JSON.parse(jsonText);
+                                    
+                                    // Ensure all required fields are added
+                                    if (!parsedEnvFactors.storage_location) {
+                                        parsedEnvFactors.storage_location = "box container";
+                                    }
+                                    
+                                    // Only add gas emission analysis if AI didn't provide it
+                                    if (!parsedEnvFactors.gas_emission_analysis) {
+                                        parsedEnvFactors.gas_emission_analysis = {
+                                            risk_level: gasAnalysis.riskLevel,
+                                            status: gasAnalysis.status,
+                                            probability: gasAnalysis.probability,
+                                            recommendation: gasAnalysis.recommendation
+                                        };
+                                    }
+                                    
+                                    // Add storage conditions with current sensor data
+                                    parsedEnvFactors.storage_conditions = {
+                                        temperature: Number(temperature),
+                                        humidity: Number(humidity),
+                                        gas_level: Number(gas_level),
+                                        timestamp: new Date().toISOString()
+                                    };
+                                    
+                                    // Add AI analysis metadata
+                                    parsedEnvFactors.ai_analysis = true;
+                                    parsedEnvFactors.confidence = gasAnalysis.probability;
+                                    parsedEnvFactors.provided_status = actual_status;
+                                    parsedEnvFactors.gas_emission_override = true;
+                                    parsedEnvFactors.timestamp = new Date().toISOString();
+                                    
+                                    // If provided_status differs from gas analysis, override gas_emission_analysis
+                                    if (actual_status && parsedEnvFactors.gas_emission_analysis && actual_status !== gasAnalysis.status) {
+                                        const providedStatus = actual_status.toLowerCase();
+                                        const riskMapping = {
+                                            'safe': 'low',
+                                            'caution': 'medium',
+                                            'unsafe': 'high'
+                                        };
+                                        const recommendationMapping = {
+                                            'safe': 'Safe to consume. Store properly to maintain freshness.',
+                                            'caution': 'Exercise caution. Inspect thoroughly before consuming. May have minor spoilage signs.',
+                                            'unsafe': 'Do not consume. Dispose safely. Food shows clear signs of spoilage.'
+                                        };
+                                        
+                                        parsedEnvFactors.gas_emission_analysis.risk_level = riskMapping[providedStatus] || gasAnalysis.riskLevel;
+                                        parsedEnvFactors.gas_emission_analysis.status = providedStatus;
+                                        parsedEnvFactors.gas_emission_analysis.recommendation = recommendationMapping[providedStatus] || gasAnalysis.recommendation;
+                                    }
+                                    
+                                    console.log('✅ AI successfully converted text to JSON with full analysis:', parsedEnvFactors);
+                                } else {
+                                    console.warn('⚠️ AI returned response but could not extract text');
+                                }
+                            } catch (aiError) {
+                                console.warn('AI conversion failed, using basic structure:', aiError.message);
+                                parsedEnvFactors = {
+                                    notes: trimmed,
+                                    storage_location: "box container"
+                                };
+                            }
+                        } else {
+                            // No AI available, create basic structure
+                            parsedEnvFactors = {
+                                notes: trimmed,
+                                storage_location: "box container"
+                            };
+                        }
+                    }
+                }
+            } else if (typeof environmental_factors === 'object') {
+                parsedEnvFactors = environmental_factors;
+            }
+        }
+
+        // Ensure storage_location is always set to "box container" if not specified
+        if (!parsedEnvFactors.storage_location) {
+            parsedEnvFactors.storage_location = "box container";
+        }
+        
+        // Enrich with gas emission analysis and sensor data if not already present from AI conversion
+        if (Object.keys(parsedEnvFactors).length > 0) {
+            // Only add if not already added by AI conversion
+            if (!parsedEnvFactors.gas_emission_analysis) {
+                parsedEnvFactors.gas_emission_analysis = {
+                    risk_level: gasAnalysis.riskLevel,
+                    status: gasAnalysis.status,
+                    probability: gasAnalysis.probability,
+                    recommendation: gasAnalysis.recommendation
+                };
+            }
+            
+            // Only add if not already added by AI conversion
+            if (!parsedEnvFactors.storage_conditions) {
+                parsedEnvFactors.storage_conditions = {
+                    temperature: Number(temperature),
+                    humidity: Number(humidity),
+                    gas_level: Number(gas_level),
+                    timestamp: new Date().toISOString()
+                };
+            }
+            
+            // Only add if not already added by AI conversion
+            if (!parsedEnvFactors.ai_analysis) {
+                parsedEnvFactors.ai_analysis = true;
+                parsedEnvFactors.confidence = gasAnalysis.probability;
+                parsedEnvFactors.provided_status = actual_status;
+                parsedEnvFactors.gas_emission_override = true;
+                parsedEnvFactors.timestamp = new Date().toISOString();
+            } else {
+                // Always update provided_status from form data, even if ai_analysis already exists
+                parsedEnvFactors.provided_status = actual_status;
+            }
+            
+            // If provided_status differs from gas analysis, override gas_emission_analysis
+            if (actual_status && parsedEnvFactors.gas_emission_analysis && actual_status !== gasAnalysis.status) {
+                const providedStatus = actual_status.toLowerCase();
+                const riskMapping = {
+                    'safe': 'low',
+                    'caution': 'medium',
+                    'unsafe': 'high'
+                };
+                const recommendationMapping = {
+                    'safe': 'Safe to consume. Store properly to maintain freshness.',
+                    'caution': 'Exercise caution. Inspect thoroughly before consuming. May have minor spoilage signs.',
+                    'unsafe': 'Do not consume. Dispose safely. Food shows clear signs of spoilage.'
+                };
+                
+                parsedEnvFactors.gas_emission_analysis.risk_level = riskMapping[providedStatus] || gasAnalysis.riskLevel;
+                parsedEnvFactors.gas_emission_analysis.status = providedStatus;
+                parsedEnvFactors.gas_emission_analysis.recommendation = recommendationMapping[providedStatus] || gasAnalysis.recommendation;
+            }
+        }
+
+        // Build the final environmental_factors object
+        const finalEnvFactors = JSON.stringify(parsedEnvFactors);
+
         console.log('🔍 ML Training Data Insertion Debug:');
         console.log('  statusToUse:', statusToUse);
         console.log('  statusToUse type:', typeof statusToUse);
@@ -89,26 +509,7 @@ router.post('/add', Auth.authenticateToken, async (req, res) => {
             statusToUse,
             sourceToUse,
             qualityToUse,
-            environmental_factors ? JSON.stringify({
-                ...environmental_factors,
-                gas_emission_analysis: {
-                    risk_level: gasAnalysis.riskLevel,
-                    status: gasAnalysis.status,
-                    probability: gasAnalysis.probability,
-                    recommendation: gasAnalysis.recommendation
-                },
-                provided_status: actual_status,
-                gas_emission_override: true
-            }) : JSON.stringify({
-                gas_emission_analysis: {
-                    risk_level: gasAnalysis.riskLevel,
-                    status: gasAnalysis.status,
-                    probability: gasAnalysis.probability,
-                    recommendation: gasAnalysis.recommendation
-                },
-                provided_status: actual_status,
-                gas_emission_override: true
-            })
+            finalEnvFactors
         ];
 
         const result = await db.query(sql, params);
@@ -442,6 +843,235 @@ router.put('/update/:id', Auth.authenticateToken, async (req, res) => {
         }
         const qualityToUse = (quality_score == null || Number.isNaN(Number(quality_score))) ? 1.0 : Math.max(0, Math.min(1, Number(quality_score)));
 
+        // Validate and sanitize environmental_factors (must be valid JSON or null)
+        let parsedEnvFactors = {};
+        if (environmental_factors) {
+            if (typeof environmental_factors === 'string') {
+                const trimmed = environmental_factors.trim();
+                if (trimmed) {
+                    try {
+                        // Try to parse to validate it's valid JSON
+                        parsedEnvFactors = JSON.parse(trimmed);
+                    } catch (jsonError) {
+                        console.warn('Invalid JSON in environmental_factors, attempting AI conversion:', jsonError.message);
+                        
+                        // Try to use AI to convert text to JSON with full sensor data
+                        if (geminiConfig.apiKey) {
+                            try {
+                                // Build context from current data
+                                let contextInfo = '\n\nCurrent sensor/form data to include:';
+                                contextInfo += `\n- Temperature: ${temperature}°C`;
+                                contextInfo += `\n- Humidity: ${humidity}%`;
+                                contextInfo += `\n- Gas Level: ${gas_level} ppm`;
+                                if (food_name) contextInfo += `\n- Food Name: ${food_name}`;
+                                contextInfo += `\n- Status: ${actual_status}`;
+                                contextInfo += '\n\nINCLUDE these values in your JSON output within a "storage_conditions" object with a current timestamp.';
+                                
+                                // Calculate gas emission analysis
+                                const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+                                const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(Number(gas_level));
+                                
+                                let gasAnalysisInfo = `\n\nGas Emission Analysis (auto-calculated from sensor):
+- Risk Level: ${gasAnalysis.riskLevel}
+- Status: ${gasAnalysis.status}
+- Probability: ${gasAnalysis.probability}%
+- Recommendation: ${gasAnalysis.recommendation}`;
+                                
+                                // If actual status differs from gas analysis status, adjust recommendation
+                                if (actual_status && actual_status !== gasAnalysis.status) {
+                                    gasAnalysisInfo += `\n\n⚠️ IMPORTANT: The provided status "${actual_status}" differs from the gas sensor status "${gasAnalysis.status}". 
+Adjust the recommendation to match the "${actual_status}" status while incorporating the gas analysis data.`;
+                                }
+                                
+                                gasAnalysisInfo += '\n\nIMPORTANT: Include this complete gas_emission_analysis object in your JSON output.';
+                                
+                                const aiPrompt = `Convert the following user input into a valid JSON object for food environmental factors. 
+Extract meaningful information and structure it properly based on the user's description.
+
+Your JSON output MUST include:
+1. User observations as "observations" or "notes" field
+2. "storage_location": "box container" (always set this)
+3. If sensor data is provided, include it in "storage_conditions" object with current timestamp${contextInfo}${gasAnalysisInfo}
+
+User input: "${trimmed}"
+
+Return ONLY a valid JSON object with these fields, nothing else. No markdown, no explanations.`;
+                                
+                                const aiResponse = await generateContent([{ text: aiPrompt }], {
+                                    temperature: 0.3,
+                                    maxOutputTokens: 500
+                                });
+                                
+                                console.log('🔍 Full AI Response:', JSON.stringify(aiResponse, null, 2));
+                                
+                                // Extract text from Gemini response structure (try multiple formats)
+                                let responseText = '';
+                                if (aiResponse) {
+                                    // Try structure 1: candidates[0].content.parts[0].text
+                                    if (aiResponse.candidates && aiResponse.candidates[0] && 
+                                        aiResponse.candidates[0].content && aiResponse.candidates[0].content.parts && 
+                                        aiResponse.candidates[0].content.parts[0] && aiResponse.candidates[0].content.parts[0].text) {
+                                        responseText = aiResponse.candidates[0].content.parts[0].text.trim();
+                                    }
+                                    // Try structure 2: text property directly
+                                    else if (aiResponse.text) {
+                                        responseText = aiResponse.text.trim();
+                                    }
+                                    // Try structure 3: candidates[0].text
+                                    else if (aiResponse.candidates && aiResponse.candidates[0] && aiResponse.candidates[0].text) {
+                                        responseText = aiResponse.candidates[0].text.trim();
+                                    }
+                                }
+                                
+                                console.log('📝 Extracted text:', responseText);
+                                
+                                if (responseText) {
+                                    let jsonText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+                                    parsedEnvFactors = JSON.parse(jsonText);
+                                    
+                                    // Ensure all required fields are added
+                                    if (!parsedEnvFactors.storage_location) {
+                                        parsedEnvFactors.storage_location = "box container";
+                                    }
+                                    
+                                    // Only add gas emission analysis if AI didn't provide it
+                                    if (!parsedEnvFactors.gas_emission_analysis) {
+                                        parsedEnvFactors.gas_emission_analysis = {
+                                            risk_level: gasAnalysis.riskLevel,
+                                            status: gasAnalysis.status,
+                                            probability: gasAnalysis.probability,
+                                            recommendation: gasAnalysis.recommendation
+                                        };
+                                    }
+                                    
+                                    // Add storage conditions with current sensor data
+                                    parsedEnvFactors.storage_conditions = {
+                                        temperature: Number(temperature),
+                                        humidity: Number(humidity),
+                                        gas_level: Number(gas_level),
+                                        timestamp: new Date().toISOString()
+                                    };
+                                    
+                                    // Add AI analysis metadata
+                                    parsedEnvFactors.ai_analysis = true;
+                                    parsedEnvFactors.confidence = gasAnalysis.probability;
+                                    parsedEnvFactors.provided_status = actual_status;
+                                    parsedEnvFactors.gas_emission_override = true;
+                                    parsedEnvFactors.timestamp = new Date().toISOString();
+                                    
+                                    // If provided_status differs from gas analysis, override gas_emission_analysis
+                                    if (actual_status && parsedEnvFactors.gas_emission_analysis && actual_status !== gasAnalysis.status) {
+                                        const providedStatus = actual_status.toLowerCase();
+                                        const riskMapping = {
+                                            'safe': 'low',
+                                            'caution': 'medium',
+                                            'unsafe': 'high'
+                                        };
+                                        const recommendationMapping = {
+                                            'safe': 'Safe to consume. Store properly to maintain freshness.',
+                                            'caution': 'Exercise caution. Inspect thoroughly before consuming. May have minor spoilage signs.',
+                                            'unsafe': 'Do not consume. Dispose safely. Food shows clear signs of spoilage.'
+                                        };
+                                        
+                                        parsedEnvFactors.gas_emission_analysis.risk_level = riskMapping[providedStatus] || gasAnalysis.riskLevel;
+                                        parsedEnvFactors.gas_emission_analysis.status = providedStatus;
+                                        parsedEnvFactors.gas_emission_analysis.recommendation = recommendationMapping[providedStatus] || gasAnalysis.recommendation;
+                                    }
+                                    
+                                    console.log('✅ AI successfully converted text to JSON with full analysis:', parsedEnvFactors);
+                                } else {
+                                    console.warn('⚠️ AI returned response but could not extract text');
+                                }
+                            } catch (aiError) {
+                                console.warn('AI conversion failed, using basic structure:', aiError.message);
+                                parsedEnvFactors = {
+                                    notes: trimmed,
+                                    storage_location: "box container"
+                                };
+                            }
+                        } else {
+                            // No AI available, create basic structure
+                            parsedEnvFactors = {
+                                notes: trimmed,
+                                storage_location: "box container"
+                            };
+                        }
+                    }
+                }
+            } else if (typeof environmental_factors === 'object') {
+                // If it's already an object, use it
+                parsedEnvFactors = environmental_factors;
+            }
+        }
+
+        // Ensure storage_location is always set to "box container" if not specified
+        if (!parsedEnvFactors.storage_location) {
+            parsedEnvFactors.storage_location = "box container";
+        }
+        
+        // Enrich with gas emission analysis and sensor data if not already present
+        if (Object.keys(parsedEnvFactors).length > 0) {
+            // Calculate gas emission analysis
+            const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+            const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(Number(gas_level));
+            
+            // Add or update gas emission analysis
+            if (!parsedEnvFactors.gas_emission_analysis) {
+                parsedEnvFactors.gas_emission_analysis = {
+                    risk_level: gasAnalysis.riskLevel,
+                    status: gasAnalysis.status,
+                    probability: gasAnalysis.probability,
+                    recommendation: gasAnalysis.recommendation
+                };
+            }
+            
+            // Add or update storage conditions with current sensor data
+            if (!parsedEnvFactors.storage_conditions) {
+                parsedEnvFactors.storage_conditions = {
+                    temperature: Number(temperature),
+                    humidity: Number(humidity),
+                    gas_level: Number(gas_level),
+                    timestamp: new Date().toISOString()
+                };
+            }
+            
+            // Add AI analysis metadata if not present
+            if (!parsedEnvFactors.ai_analysis) {
+                parsedEnvFactors.ai_analysis = true;
+                parsedEnvFactors.confidence = gasAnalysis.probability;
+                parsedEnvFactors.provided_status = actual_status;
+                parsedEnvFactors.gas_emission_override = true;
+                parsedEnvFactors.timestamp = new Date().toISOString();
+            } else {
+                // Always update provided_status from form data, even if ai_analysis already exists
+                parsedEnvFactors.provided_status = actual_status;
+            }
+            
+            // If provided_status differs from gas analysis, override gas_emission_analysis
+            if (actual_status && parsedEnvFactors.gas_emission_analysis && actual_status !== gasAnalysis.status) {
+                const providedStatus = actual_status.toLowerCase();
+                const riskMapping = {
+                    'safe': 'low',
+                    'caution': 'medium',
+                    'unsafe': 'high'
+                };
+                const recommendationMapping = {
+                    'safe': 'Safe to consume. Store properly to maintain freshness.',
+                    'caution': 'Exercise caution. Inspect thoroughly before consuming. May have minor spoilage signs.',
+                    'unsafe': 'Do not consume. Dispose safely. Food shows clear signs of spoilage.'
+                };
+                
+                parsedEnvFactors.gas_emission_analysis.risk_level = riskMapping[providedStatus] || gasAnalysis.riskLevel;
+                parsedEnvFactors.gas_emission_analysis.status = providedStatus;
+                parsedEnvFactors.gas_emission_analysis.recommendation = recommendationMapping[providedStatus] || gasAnalysis.recommendation;
+            }
+        }
+
+        // Stringify for database storage
+        const environmentalFactorsToSave = Object.keys(parsedEnvFactors).length > 0 
+            ? JSON.stringify(parsedEnvFactors) 
+            : null;
+
         // Check if training data exists
         const [existingRows] = await db.query(`
             SELECT training_id, food_name, food_category 
@@ -482,7 +1112,7 @@ router.put('/update/:id', Auth.authenticateToken, async (req, res) => {
             statusToUse,
             sourceToUse,
             qualityToUse,
-            environmental_factors || null,
+            environmentalFactorsToSave,
             id
         ];
 

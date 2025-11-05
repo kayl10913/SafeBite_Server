@@ -23,10 +23,16 @@ const corsOptions = isDevelopment ? {
         // Allow localhost and network IPs in development
         const allowedOrigins = [
             'http://localhost:3000',
+            'http://localhost:3001',
+            'http://localhost:8080',
             'http://127.0.0.1:3000',
+            'http://127.0.0.1:3001',
+            'http://127.0.0.1:8080',
             'http://192.168.137.98:3000',
             'https://safebiteph.com',
             'https://www.safebiteph.com',
+            /^http:\/\/localhost:\d+$/, // Allow any localhost port
+            /^http:\/\/127\.0\.0\.1:\d+$/, // Allow any 127.0.0.1 port
             /^http:\/\/192\.168\.\d+\.\d+:3000$/, // Allow any 192.168.x.x:3000
             /^http:\/\/10\.\d+\.\d+\.\d+:3000$/,  // Allow any 10.x.x.x:3000
             /^http:\/\/172\.(1[6-9]|2\d|3[01])\.\d+\.\d+:3000$/ // Allow 172.16-31.x.x:3000
@@ -43,6 +49,7 @@ const corsOptions = isDevelopment ? {
         if (isAllowed) {
             callback(null, true);
         } else {
+            console.log(`CORS blocked origin: ${origin}`);
             callback(new Error('Not allowed by CORS'));
         }
     },
@@ -51,8 +58,7 @@ const corsOptions = isDevelopment ? {
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 } : {
     origin: [
-        'http://localhost:3000',
-        'http://127.0.0.1:3000',
+        'https://safebite-server-zh2r.onrender.com',
         'https://safebiteph.com',
         'https://www.safebiteph.com'
     ],
@@ -134,7 +140,23 @@ app.get('/api/test', (req, res) => {
     res.json({
         message: 'SafeBite API is working!',
         timestamp: new Date().toISOString(),
-        status: 'success'
+        status: 'success',
+        environment: isDevelopment ? 'development' : 'production',
+        basePath: __dirname
+    });
+});
+
+// Debug endpoint to check file paths
+app.get('/api/debug/paths', (req, res) => {
+    const fs = require('fs');
+    const errorPagePath = path.join(__dirname, '../../SafeBite_Client/pages/500.html');
+    
+    res.json({
+        errorPagePath: errorPagePath,
+        fileExists: fs.existsSync(errorPagePath),
+        isDevelopment: isDevelopment,
+        currentDir: __dirname,
+        resolvedPath: path.resolve(errorPagePath)
     });
 });
 
@@ -287,6 +309,7 @@ const alertsRoutes = require('./routes/alerts');
 const deviceManagementRoutes = require('./routes/device-management');
 const spoilageAnalyticsRoutes = require('./routes/spoilage-analytics');
 const statisticsRoutes = require('./routes/statistics');
+const expiryUpdateRoutes = require('./routes/expery_update');
 
 // API routes
 // Global activity logger (non-blocking)
@@ -356,6 +379,7 @@ app.use('/api/alerts', alertsRoutes);
 app.use('/api/device-management', deviceManagementRoutes);
 app.use('/api/spoilage-analytics', spoilageAnalyticsRoutes);
 app.use('/api/statistics', statisticsRoutes);
+app.use('/api/expiry-update', expiryUpdateRoutes);
 
 // Serve frontend routes (dev only). In production, redirect to public frontend domain
 if (isDevelopment) {
@@ -392,23 +416,48 @@ if (isDevelopment) {
 
     // Error page routes for direct access
     app.get('/error/400', (req, res) => {
-        res.status(400).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/400.html'));
+        try {
+            res.status(400).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/400.html'));
+        } catch (error) {
+            console.error('Error serving 400 page:', error);
+            res.status(400).json({ error: 'Bad Request' });
+        }
     });
     
     app.get('/error/401', (req, res) => {
-        res.status(401).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/401.html'));
+        try {
+            res.status(401).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/401.html'));
+        } catch (error) {
+            console.error('Error serving 401 page:', error);
+            res.status(401).json({ error: 'Unauthorized' });
+        }
     });
     
     app.get('/error/403', (req, res) => {
-        res.status(403).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/403.html'));
+        try {
+            res.status(403).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/403.html'));
+        } catch (error) {
+            console.error('Error serving 403 page:', error);
+            res.status(403).json({ error: 'Forbidden' });
+        }
     });
     
     app.get('/error/404', (req, res) => {
-        res.status(404).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/404.html'));
+        try {
+            res.status(404).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/404.html'));
+        } catch (error) {
+            console.error('Error serving 404 page:', error);
+            res.status(404).json({ error: 'Not Found' });
+        }
     });
     
     app.get('/error/500', (req, res) => {
-        res.status(500).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/500.html'));
+        try {
+            res.status(500).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/500.html'));
+        } catch (error) {
+            console.error('Error serving 500 page:', error);
+            res.status(500).json({ error: 'Internal Server Error' });
+        }
     });
 } else {
     app.get('/', (req, res) => {
@@ -418,29 +467,37 @@ if (isDevelopment) {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-    console.error(err.stack);
+    console.error('Error middleware caught:', err.stack);
     
     // Serve custom error pages in development
     if (isDevelopment) {
-        if (err.status === 400) {
-            return res.status(400).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/400.html'));
-        }
-        if (err.status === 401) {
-            return res.status(401).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/401.html'));
-        }
-        if (err.status === 403) {
-            return res.status(403).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/403.html'));
-        }
-        if (err.status === 404) {
-            return res.status(404).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/404.html'));
-        }
-        if (err.status === 500 || !err.status) {
-            return res.status(500).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/500.html'));
+        try {
+            if (err.status === 400) {
+                return res.status(400).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/400.html'));
+            }
+            if (err.status === 401) {
+                return res.status(401).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/401.html'));
+            }
+            if (err.status === 403) {
+                return res.status(403).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/403.html'));
+            }
+            if (err.status === 404) {
+                return res.status(404).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/404.html'));
+            }
+            if (err.status === 500 || !err.status) {
+                return res.status(500).sendFile(path.join(__dirname, '../../SafeBite_Client/pages/500.html'));
+            }
+        } catch (fileError) {
+            console.error('Error serving error page:', fileError);
+            // Fallback to JSON response if file serving fails
         }
     }
     
     // Fallback for production or other errors
-    res.status(500).json({ error: 'Something went wrong!' });
+    res.status(err.status || 500).json({ 
+        error: err.message || 'Something went wrong!',
+        status: err.status || 500
+    });
 });
 
 // Catch-all route: dev serves SPA index, production returns 404 with hint
@@ -466,11 +523,40 @@ app.use((req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 SafeBite server is running on 0.0.0.0:${PORT}`);
+    console.log(`🌐 Local access: http://localhost:${PORT}`);
+    console.log(`🌐 Network access: http://127.0.0.1:${PORT}`);
     console.log(`🌐 Frontend: https://safebiteph.com`);
     console.log(`🔗 API base: https://safebite-server-zh2r.onrender.com`);
     console.log(`🔌 API test: https://safebite-server-zh2r.onrender.com/api/test`);
     console.log(`📊 Health check: https://safebite-server-zh2r.onrender.com/health`);
     console.log(`🔗 Arduino endpoint: https://safebite-server-zh2r.onrender.com/api/sensor/arduino-data`);
+    
+    // Start silent expiry update job
+    const expiryUpdate = require('./routes/expery_update');
+    
+    // Run on startup (after a short delay to ensure DB connection)
+    setTimeout(async () => {
+        try {
+            console.log('🔄 Running initial expiry update...');
+            await expiryUpdate.runExpiryUpdates();
+            console.log('✅ Initial expiry update completed');
+        } catch (error) {
+            console.error('❌ Error running initial expiry update:', error.message);
+        }
+    }, 5000); // 5 second delay
+    
+    // Run every hour (3600000 ms)
+    setInterval(async () => {
+        try {
+            console.log('🔄 Running scheduled expiry update...');
+            await expiryUpdate.runExpiryUpdates();
+            console.log('✅ Scheduled expiry update completed');
+        } catch (error) {
+            console.error('❌ Error running scheduled expiry update:', error.message);
+        }
+    }, 3600000); // 1 hour = 3600000 ms
+    
+    console.log('⏰ Expiry update job scheduled to run every hour');
 });
 
 module.exports = app;

@@ -35,40 +35,79 @@ function analyzeGasEmissionThresholds(gasLevel) {
     }
 
     if (gasLevel >= 400) {
-        // High Risk (400+ ppm) - Spoilage Detected
+        // High Risk (400+ ppm) - Severe Spoilage Detected
         return {
             riskLevel: 'high',
             status: 'unsafe',
-            probability: 95,
-            confidence: 90,
-            recommendation: 'High Risk: Spoilage Detected (400+ ppm). Do not consume. Dispose of the food to avoid foodborne illness. Sanitize storage area to prevent cross-contamination.',
+            probability: 98,
+            confidence: 95,
+            recommendation: 'CRITICAL: Severe Spoilage Detected (400+ ppm). Do not consume. Dispose immediately to avoid foodborne illness. Sanitize storage area thoroughly.',
             threshold: '400+ ppm',
             gasLevel: gasLevel,
             alertLevel: 'critical',
             actionRequired: 'immediate_disposal'
         };
     } else if (gasLevel >= 200) {
-        // Medium Risk (200-399 ppm) - Early Spoilage Signs
+        // High Risk (200-399 ppm) - Advanced Spoilage
+        return {
+            riskLevel: 'high',
+            status: 'unsafe',
+            probability: 90,
+            confidence: 90,
+            recommendation: 'CRITICAL: Advanced Spoilage Detected (200-399 ppm). Do not consume. Dispose immediately. Check for strong odors, discoloration, or slimy texture.',
+            threshold: '200-399 ppm',
+            gasLevel: gasLevel,
+            alertLevel: 'critical',
+            actionRequired: 'immediate_disposal'
+        };
+    } else if (gasLevel >= 100) {
+        // High Risk (100-199 ppm) - Spoilage Detected
+        return {
+            riskLevel: 'high',
+            status: 'unsafe',
+            probability: 85,
+            confidence: 88,
+            recommendation: 'CRITICAL: Spoilage Detected (100-199 ppm). Food is unsafe to consume. Dispose immediately. Inspect for off-odors, discoloration, or texture changes.',
+            threshold: '100-199 ppm',
+            gasLevel: gasLevel,
+            alertLevel: 'critical',
+            actionRequired: 'immediate_disposal'
+        };
+    } else if (gasLevel >= 70) {
+        // High Risk (70-99 ppm) - Spoilage Detected (Based on observations)
+        return {
+            riskLevel: 'high',
+            status: 'unsafe',
+            probability: 80,
+            confidence: 85,
+            recommendation: 'CRITICAL: Spoilage Detected (70-99 ppm). Food is unsafe to consume. Based on sensor observations, gas levels above 70 ppm indicate spoilage. Dispose immediately if strong smell or rot is observed.',
+            threshold: '70-99 ppm',
+            gasLevel: gasLevel,
+            alertLevel: 'critical',
+            actionRequired: 'immediate_disposal'
+        };
+    } else if (gasLevel >= 50) {
+        // Medium Risk (50-69 ppm) - Early Warning Signs
         return {
             riskLevel: 'medium',
             status: 'caution',
-            probability: 75,
+            probability: 60,
             confidence: 85,
-            recommendation: 'Medium Risk: Early Spoilage Signs (200-399 ppm). Consume soon (within 1–2 days). Refrigerate immediately if not yet stored. Check for changes in smell, texture, or color.',
-            threshold: '200-399 ppm',
+            recommendation: 'WARNING: Elevated Gas Levels (50-69 ppm). Food may be starting to spoil. Inspect carefully for any signs of spoilage (smell, color, texture). Consume within 24 hours or discard if suspicious.',
+            threshold: '50-69 ppm',
             gasLevel: gasLevel,
             alertLevel: 'warning',
-            actionRequired: 'consume_soon'
+            actionRequired: 'inspect_and_consume_soon'
         };
     } else if (gasLevel >= 0) {
-        // Low Risk (0-199 ppm) - Fresh/Safe
+        // Low Risk (0-49 ppm) - Fresh/Safe
         return {
             riskLevel: 'low',
             status: 'safe',
-            probability: gasLevel > 150 ? 60 : 20,
+            probability: 20,
             confidence: 90,
-            recommendation: 'Low Risk: Fresh/Safe (0-199 ppm). Food is safe to consume and store. Keep in a cool, dry place or refrigerate if needed.',
-            threshold: '0-199 ppm',
+            recommendation: 'Low Risk: Fresh/Safe (0-49 ppm). Food is safe to consume and store. Keep in a cool, dry place or refrigerate if needed.',
+            threshold: '0-49 ppm',
             gasLevel: gasLevel,
             alertLevel: 'info',
             actionRequired: 'normal_storage'
@@ -97,21 +136,39 @@ function getGasEmissionThresholds() {
     return {
         low: {
             min: 0,
-            max: 199,
+            max: 49,
             status: 'Fresh / Safe',
             description: 'Food is safe to consume and store. Keep in a cool, dry place or refrigerate if needed.'
         },
         medium: {
-            min: 200,
-            max: 399,
-            status: 'Early Spoilage Signs',
-            description: 'Consume soon (within 1–2 days). Refrigerate immediately if not yet stored. Check for changes in smell, texture, or color.'
+            min: 50,
+            max: 69,
+            status: 'Early Warning',
+            description: 'Elevated gas levels detected. Food may be starting to spoil. Inspect carefully and consume within 24 hours or discard if suspicious.'
         },
         high: {
+            min: 70,
+            max: 99,
+            status: 'Spoilage Detected',
+            description: 'CRITICAL: Gas levels above 70 ppm indicate spoilage. Food is unsafe to consume. Dispose immediately if strong smell or rot is observed.'
+        },
+        high_2: {
+            min: 100,
+            max: 199,
+            status: 'Spoilage Detected',
+            description: 'CRITICAL: Food is unsafe to consume. Dispose immediately. Inspect for off-odors, discoloration, or texture changes.'
+        },
+        high_3: {
+            min: 200,
+            max: 399,
+            status: 'Advanced Spoilage',
+            description: 'CRITICAL: Advanced spoilage detected. Do not consume. Dispose immediately. Check for strong odors, discoloration, or slimy texture.'
+        },
+        critical: {
             min: 400,
             max: Infinity,
-            status: 'Spoilage Detected',
-            description: 'Do not consume. Dispose of the food to avoid foodborne illness. Sanitize storage area to prevent cross-contamination.'
+            status: 'Severe Spoilage',
+            description: 'CRITICAL: Severe spoilage detected. Do not consume. Dispose immediately to avoid foodborne illness. Sanitize storage area thoroughly.'
         }
     };
 }
@@ -178,7 +235,10 @@ function analyzeEnvironmentalConditions(temperature, humidity, foodType = null) 
     }
     
     // Humidity analysis based on food-specific requirements
-    if (humidity > foodRequirements.humidityMax) {
+    // Extreme humidity (>90%) should always be considered high risk
+    if (humidity > 90) {
+        humidityRisk = 'high';   // Extreme humidity - critical risk
+    } else if (humidity > foodRequirements.humidityMax) {
         humidityRisk = 'high';   // Above food-specific maximum
     } else if (humidity > foodRequirements.humidityOptimal) {
         humidityRisk = 'medium'; // Above food-specific optimal but within max

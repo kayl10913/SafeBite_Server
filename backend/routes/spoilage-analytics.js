@@ -86,9 +86,8 @@ router.get('/summary', async (req, res) => {
                 SUM(CASE WHEN mp.spoilage_status = 'safe' THEN 1 ELSE 0 END) as safe_count,
                 SUM(CASE WHEN mp.spoilage_status = 'caution' THEN 1 ELSE 0 END) as caution_count,
                 SUM(CASE WHEN mp.spoilage_status = 'unsafe' THEN 1 ELSE 0 END) as spoiled_count,
-                SUM(CASE WHEN fi.expiration_date < CURDATE() THEN 1 ELSE 0 END) as expired_count
+                SUM(CASE WHEN mp.expiration_date < CURDATE() THEN 1 ELSE 0 END) as expired_count
             FROM ml_predictions mp
-            LEFT JOIN food_items fi ON mp.food_id = fi.food_id
             WHERE mp.user_id = ?
         `;
 
@@ -160,9 +159,8 @@ router.get('/stats', async (req, res) => {
                 SUM(CASE WHEN mp.spoilage_status = 'safe' THEN 1 ELSE 0 END) as safe_count,
                 SUM(CASE WHEN mp.spoilage_status = 'caution' THEN 1 ELSE 0 END) as caution_count,
                 SUM(CASE WHEN mp.spoilage_status = 'unsafe' THEN 1 ELSE 0 END) as unsafe_count,
-                SUM(CASE WHEN fi.expiration_date < CURDATE() THEN 1 ELSE 0 END) as expired_count
+                SUM(CASE WHEN mp.expiration_date < CURDATE() THEN 1 ELSE 0 END) as expired_count
             FROM ml_predictions mp
-            LEFT JOIN food_items fi ON mp.food_id = fi.food_id
             WHERE mp.user_id = ?
         `;
 

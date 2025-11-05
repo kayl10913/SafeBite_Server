@@ -99,6 +99,7 @@ router.get('/samples', Auth.authenticateToken, async (req, res) => {
                     t.actual_spoilage_status,
                     t.data_source,
                     t.quality_score,
+                    t.environmental_factors,
                     t.created_at
                 FROM ml_training_data t
                 ORDER BY t.created_at DESC
@@ -116,6 +117,7 @@ router.get('/samples', Auth.authenticateToken, async (req, res) => {
                     t.actual_spoilage_status,
                     t.data_source,
                     t.quality_score,
+                    t.environmental_factors,
                     t.created_at
                 FROM ml_training_data t
                 ORDER BY t.created_at DESC

@@ -3,51 +3,279 @@ const router = express.Router();
 const Auth = require('../config/auth');
 const db = require('../config/database');
 const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+const { generateContent } = require('../utils/geminiClient');
+const geminiConfig = require('../config/gemini');
 
 // SmartSense spoilage assessment using standardized thresholds
-function assessSmartSenseStatus(foodName, category, temperature, humidity, gasLevel) {
+// EITHER high humidity (>90%) OR gas (>70 ppm) triggers unsafe
+function assessSmartSenseStatus(foodName, category, temperature, humidity, gasLevel, manualOverride = null) {
 	// Use standardized thresholds instead of hardcoded food-specific values
 
-	// Apply gas emission thresholds for all foods - PRIORITY OVER OTHER FACTORS
+	// Apply gas emission thresholds for all foods
 	const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(gasLevel);
 	
-	// If gas analysis indicates high or medium risk, use that result immediately
-	if (gasAnalysis.riskLevel === 'high' || gasAnalysis.riskLevel === 'medium') {
+	// Analyze environmental conditions
+	const envAnalysis = gasEmissionAnalysis.analyzeEnvironmentalConditions(temperature, humidity, foodName);
+	
+	// MANUAL OVERRIDE: If user reports strong smell/rot, mark as unsafe immediately
+	if (manualOverride === 'spoiled' || manualOverride === 'unsafe' || manualOverride === true) {
 		return {
-			status: gasAnalysis.status,
-			probability: gasAnalysis.probability,
+			status: 'unsafe',
+			probability: 95,
+			confidence: 100,
+			recommendation: `USER REPORTED: Strong smell or rot detected. Food is unsafe to consume. Dispose immediately. This data will be used to improve the system.`,
+			gasThreshold: gasAnalysis.threshold,
+			manualOverride: true,
+			criticalFactor: 'user_report'
+		};
+	}
+	
+	// CRITICAL RULE: EITHER high humidity (>90%) OR gas (>70 ppm) triggers unsafe
+	// This is based on observations that either condition alone can indicate spoilage
+	const isUnsafeByHumidity = humidity > 90;
+	const isUnsafeByGas = gasLevel > 70;
+	
+	if (isUnsafeByHumidity || isUnsafeByGas) {
+		let criticalFactor = [];
+		let recommendation = 'CRITICAL: ';
+		
+		if (isUnsafeByHumidity && isUnsafeByGas) {
+			criticalFactor.push('humidity', 'gas');
+			recommendation += `Both extremely high humidity (${humidity.toFixed(1)}%) and elevated gas levels (${gasLevel.toFixed(1)} ppm) detected. `;
+		} else if (isUnsafeByHumidity) {
+			criticalFactor.push('humidity');
+			recommendation += `Extremely high humidity (${humidity.toFixed(1)}%) detected. `;
+		} else {
+			criticalFactor.push('gas');
+			recommendation += `Elevated gas levels (${gasLevel.toFixed(1)} ppm) detected. `;
+		}
+		
+		recommendation += `Food is unsafe to consume. Inspect immediately - if strong smell or rot is observed, dispose immediately. `;
+		recommendation += `This promotes rapid bacterial growth and spoilage.`;
+		
+		return {
+			status: 'unsafe',
+			probability: isUnsafeByHumidity && isUnsafeByGas ? 95 : 85,
+			confidence: 90,
+			recommendation: recommendation,
+			gasThreshold: gasAnalysis.threshold,
+			environmentalOverride: isUnsafeByHumidity,
+			gasOverride: isUnsafeByGas,
+			criticalFactor: criticalFactor.join('_and_')
+		};
+	}
+	
+	// If gas analysis indicates high or medium risk (but gas <= 70), combine with environmental factors
+	if (gasAnalysis.riskLevel === 'high' || (gasAnalysis.riskLevel === 'medium' && gasAnalysis.status === 'caution')) {
+		// Combine with environmental factors
+		let finalProbability = gasAnalysis.probability;
+		let finalStatus = gasAnalysis.status;
+		
+		// Increase probability if environmental conditions are also poor
+		if (envAnalysis.overallRisk === 'high') {
+			finalProbability = Math.min(95, finalProbability + 15);
+			if (finalStatus === 'caution') finalStatus = 'unsafe';
+		} else if (envAnalysis.overallRisk === 'medium') {
+			finalProbability = Math.min(90, finalProbability + 10);
+		}
+		
+		return {
+			status: finalStatus,
+			probability: finalProbability,
 			confidence: gasAnalysis.confidence,
-			recommendation: gasAnalysis.recommendation,
+			recommendation: `${gasAnalysis.recommendation} ${envAnalysis.overallRisk !== 'normal' ? envAnalysis.recommendation : ''}`,
 			gasThreshold: gasAnalysis.threshold
 		};
 	}
 	
-	// For low risk gas levels, analyze environmental conditions based on food-specific requirements
-	// Gas emission thresholds take priority - if gas is safe, food is generally safe
-	const envAnalysis = gasEmissionAnalysis.analyzeEnvironmentalConditions(temperature, humidity, foodName);
-	
-	let status = 'safe';
-	let probability = 20; // Base safe probability for low gas levels
+	// For low risk gas levels, analyze environmental conditions
+	let status = gasAnalysis.status;
+	let probability = gasAnalysis.probability;
 	let confidence = 90;
 	
-	// Apply environmental adjustments based on baseline conditions
+	// Apply environmental adjustments - environmental factors can significantly impact safety
 	if (envAnalysis.overallRisk === 'high') {
-		probability += 20; // Minor increase for high environmental risk
+		// High environmental risk with low gas = elevated caution
+		probability = Math.min(75, probability + 35);
 		status = 'caution';
+		confidence = 85;
 	} else if (envAnalysis.overallRisk === 'medium') {
-		probability += 10; // Very minor increase for medium environmental risk
+		probability = Math.min(60, probability + 25);
+		if (status === 'safe') status = 'caution';
+		confidence = 85;
 	}
 	
-	// Cap probability at 40% for low gas levels (since gas is the primary indicator)
-	probability = Math.min(probability, 40);
+	// Combine recommendations
+	const recommendation = gasAnalysis.recommendation + 
+		(envAnalysis.overallRisk !== 'normal' ? ` ${envAnalysis.recommendation}` : '');
 	
 	return {
 		status: status,
 		probability: probability,
 		confidence: confidence,
-		recommendation: gasAnalysis.recommendation,
+		recommendation: recommendation,
 		gasThreshold: gasAnalysis.threshold
 	};
+}
+
+// AI API analysis function for enhanced prediction support
+// AI API is PRIMARY decision maker, gas emission thresholds are used as SUPPORT/validation
+async function getAIAnalysisForPrediction(foodName, temperature, humidity, gasLevel) {
+    try {
+        // Gas emission threshold ranges for AI reference (support/validation)
+        const gasThresholds = {
+            safe: '0-49 ppm (Fresh/Safe)',
+            caution: '50-69 ppm (Early Warning)',
+            unsafe_low: '70-99 ppm (Spoilage Detected - based on observations)',
+            unsafe_medium: '100-199 ppm (Spoilage Detected)',
+            unsafe_high: '200-399 ppm (Advanced Spoilage)',
+            unsafe_critical: '400+ ppm (Severe Spoilage)'
+        };
+        
+        const systemInstruction = 'You are an AI food spoilage risk analyst for a sensor-driven monitoring system. '
+            + 'You are the PRIMARY decision maker for food spoilage assessment. '
+            + 'Given food name and current sensor readings (temperature in °C, humidity in %, and gas level from a VOC sensor in ppm), '
+            + 'assess spoilage risk using your food safety knowledge and return ONLY a valid JSON object. '
+            + 'GAS EMISSION THRESHOLDS (for reference/validation support): '
+            + 'Gas 0-49 ppm = Generally SAFE. '
+            + 'Gas 50-69 ppm = CAUTION (early warning signs). '
+            + 'Gas 70-99 ppm = UNSAFE (spoilage detected based on sensor observations). '
+            + 'Gas 100-199 ppm = UNSAFE (spoilage detected). '
+            + 'Gas 200+ ppm = UNSAFE (advanced/severe spoilage). '
+            + 'HUMIDITY THRESHOLD: Humidity >90% = UNSAFE (promotes rapid bacterial growth). '
+            + 'Use these thresholds as REFERENCE/SUPPORT, but make your PRIMARY decision based on: '
+            + '1. Food type characteristics and typical spoilage patterns '
+            + '2. Combined sensor readings (temperature, humidity, gas) '
+            + '3. Food safety knowledge and best practices '
+            + '4. Environmental conditions and storage context '
+            + 'Consider all factors together - you may override threshold ranges if food-specific knowledge suggests different assessment. '
+            + 'Return ONLY valid JSON. No markdown, no explanations, no additional text.';
+
+        const schema = {
+            spoilage_status: 'safe|caution|unsafe',
+            spoilage_probability: '0-100 integer',
+            confidence_score: '0-100 integer',
+            risk_level: 'low|medium|high',
+            summary: 'brief 1-2 sentence overview',
+            key_factors: ['list of contributing factors'],
+            recommendations: ['list of actionable recommendations'],
+            estimated_shelf_life_hours: 'integer',
+            ai_insights: 'any additional AI insights or caveats'
+        };
+
+        const userPrompt = [
+            `Food Name: ${foodName}`,
+            `Temperature: ${temperature}°C`,
+            `Humidity: ${humidity}%`,
+            `Gas Level: ${gasLevel} ppm`,
+            '',
+            'GAS EMISSION THRESHOLDS (Reference/Support):',
+            `- Current reading: ${gasLevel} ppm falls in ${gasLevel >= 400 ? '400+ ppm (Severe)' : gasLevel >= 200 ? '200-399 ppm (Advanced)' : gasLevel >= 100 ? '100-199 ppm' : gasLevel >= 70 ? '70-99 ppm' : gasLevel >= 50 ? '50-69 ppm' : '0-49 ppm'} range`,
+            '- Use these as SUPPORT/validation, but make PRIMARY decision based on food type and combined factors',
+            '',
+            'YOUR PRIMARY ASSESSMENT:',
+            'Analyze this food using your food safety knowledge. Consider:',
+            '- Food type spoilage characteristics',
+            '- Combined effect of all three sensors (temperature, humidity, gas)',
+            '- Typical storage requirements for this food type',
+            '- Environmental context and food safety best practices',
+            '- You may override threshold ranges if food-specific knowledge suggests different assessment',
+            '',
+            'Return ONLY valid JSON matching this structure:',
+            JSON.stringify(schema, null, 2)
+        ].join('\n');
+
+        const response = await generateContent([
+            { text: systemInstruction + '\n\n' + userPrompt }
+        ], {
+            temperature: 0.3,
+            topP: 0.8,
+            maxOutputTokens: 512
+        });
+
+        // Extract text from response
+        let text = '';
+        if (response.candidates && response.candidates[0] && response.candidates[0].content && response.candidates[0].content.parts) {
+            for (const part of response.candidates[0].content.parts) {
+                if (part.text) {
+                    text += part.text;
+                }
+            }
+        }
+
+        // Parse JSON from response
+        let analysis = null;
+        let cleaned = (text || '').trim();
+        
+        // Strip markdown code fences if present
+        if (cleaned.startsWith('```json')) {
+            cleaned = cleaned.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+        } else if (cleaned.startsWith('```')) {
+            cleaned = cleaned.replace(/^```\s*/, '').replace(/\s*```$/, '');
+        }
+        
+        // Extract JSON object
+        const jsonStart = cleaned.indexOf('{');
+        const jsonEnd = cleaned.lastIndexOf('}');
+        if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+            cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+        }
+        
+        try {
+            analysis = JSON.parse(cleaned);
+        } catch (parseError) {
+            // Fallback: try to extract JSON from response
+            const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    analysis = JSON.parse(jsonMatch[0]);
+                } catch (fallbackError) {
+                    console.warn('Failed to parse AI API response:', fallbackError.message);
+                    return null;
+                }
+            } else {
+                console.warn('No JSON found in AI API response');
+                return null;
+            }
+        }
+
+        // Validate and normalize AI analysis
+        if (analysis && typeof analysis === 'object') {
+            // Normalize status values
+            const status = (analysis.spoilage_status || '').toLowerCase();
+            if (status === 'safe' || status === 'caution' || status === 'unsafe') {
+                analysis.spoilage_status = status;
+            } else {
+                // Map risk_level to spoilage_status if needed
+                const riskLevel = (analysis.risk_level || '').toLowerCase();
+                if (riskLevel === 'high') {
+                    analysis.spoilage_status = 'unsafe';
+                } else if (riskLevel === 'medium') {
+                    analysis.spoilage_status = 'caution';
+                } else {
+                    analysis.spoilage_status = 'safe';
+                }
+            }
+
+            return {
+                spoilage_status: analysis.spoilage_status,
+                spoilage_probability: analysis.spoilage_probability || 50,
+                confidence_score: analysis.confidence_score || 85,
+                risk_level: analysis.risk_level || 'medium',
+                summary: analysis.summary || '',
+                key_factors: analysis.key_factors || [],
+                recommendations: analysis.recommendations || [],
+                estimated_shelf_life_hours: analysis.estimated_shelf_life_hours || 24,
+                ai_insights: analysis.ai_insights || '',
+                source: 'ai_api'
+            };
+        }
+
+        return null;
+    } catch (error) {
+        console.error('Error getting AI API analysis:', error);
+        return null;
+    }
 }
 
 // ML training-data based assessment: classify by nearest centroid from historical labels
@@ -295,7 +523,7 @@ router.post('/training-data', Auth.authenticateToken, async (req, res) => {
         // Verify the inserted data
         try {
             const [verifyResult] = await db.query(
-                'SELECT actual_spoilage_status FROM ml_training_data WHERE id = ?',
+                'SELECT actual_spoilage_status FROM ml_training_data WHERE training_id = ?',
                 [result.insertId]
             );
             console.log('🔍 ML Workflow Verification Query Result:');
@@ -343,6 +571,7 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
             temperature,
             humidity,
             gas_level,
+            expiration_date,
             spoilage_probability,
             spoilage_status,
             confidence_score,
@@ -350,6 +579,22 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
             ai_original_status,
             display_override_status
         } = req.body;
+        
+        // Get expiration_date from ml_predictions if food_id is provided, otherwise use from request body
+        let expirationDateValue = expiration_date || null;
+        if (food_id && !expirationDateValue) {
+            try {
+                const prediction = await db.query(
+                    'SELECT expiration_date FROM ml_predictions WHERE food_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1',
+                    [food_id, user_id]
+                );
+                if (prediction && prediction.length > 0 && prediction[0].expiration_date) {
+                    expirationDateValue = prediction[0].expiration_date;
+                }
+            } catch (err) {
+                console.warn('Could not fetch expiration_date from ml_predictions:', err.message);
+            }
+        }
         
         // Debug logging for AI vs Override comparison
         if (ai_original_status && display_override_status && ai_original_status !== display_override_status) {
@@ -484,6 +729,26 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
         });
         console.log('  Temperature Check: 61.10°C > 26°C threshold?', parseFloat(finalTemperature) > 26);
         
+        // Get AI API analysis for enhanced prediction support
+        let aiApiAnalysis = null;
+        if (geminiConfig.apiKey) {
+            try {
+                console.log('🤖 Calling AI API for enhanced prediction support...');
+                aiApiAnalysis = await getAIAnalysisForPrediction(
+                    food_name || food_category || 'Food',
+                    parseFloat(finalTemperature),
+                    parseFloat(finalHumidity),
+                    parseFloat(finalGasLevel)
+                );
+                console.log('  AI API Analysis Result:', aiApiAnalysis);
+            } catch (aiError) {
+                console.warn('  AI API analysis failed:', aiError.message);
+                // Continue without AI analysis if it fails
+            }
+        } else {
+            console.log('  AI API not configured (GEMINI_API_KEY not set)');
+        }
+        
         // Prioritize gas emission analysis first, then AI analysis, then training data, then SmartSense assessment
         // Gas emission is the PRIMARY indicator of spoilage
         const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(parseFloat(finalGasLevel));
@@ -497,42 +762,67 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
         }
         
         const trained = await assessFromTrainingData(db, food_name, food_category, parseFloat(finalTemperature), parseFloat(finalHumidity), parseFloat(finalGasLevel));
-        const smart = assessSmartSenseStatus(food_name, food_category, parseFloat(finalTemperature), parseFloat(finalHumidity), parseFloat(finalGasLevel));
         
-        console.log('  Gas Emission Analysis:', gasAnalysis.riskLevel, gasBasedStatus);
-        console.log('  AI Analysis Status:', spoilage_status);
+        // Get manual override from request body (user-reported smell/rot)
+        const manualOverride = req.body.manual_override || req.body.manualOverride || req.body.user_reported_spoiled || null;
+        const smart = assessSmartSenseStatus(food_name, food_category, parseFloat(finalTemperature), parseFloat(finalHumidity), parseFloat(finalGasLevel), manualOverride);
+        
+        console.log('  Gas Emission Analysis (Support):', gasAnalysis.riskLevel, gasBasedStatus);
+        console.log('  AI API Analysis (Primary):', aiApiAnalysis ? aiApiAnalysis.spoilage_status : 'None');
+        console.log('  AI Analysis Status (from body):', spoilage_status);
         console.log('  Training Data Assessment:', trained ? trained.status : 'None');
         console.log('  SmartSense Assessment:', smart ? smart.status : 'None');
         
-        // Gas emission analysis takes absolute priority - ignore all other factors
+        // Priority order: AI API (Primary) > Gas emission (Support/Validation) > Training data > SmartSense > Body spoilage_status
+        // AI API analysis is the PRIMARY decision maker, gas emission thresholds are used for SUPPORT/validation
         let finalStatus;
-        if (gasAnalysis.riskLevel === 'low') {
-            finalStatus = 'safe'; // Gas emission says safe = safe, regardless of AI analysis
-        } else if (gasAnalysis.riskLevel === 'medium') {
-            finalStatus = 'caution'; // Gas emission says medium = caution, regardless of AI analysis
-        } else if (gasAnalysis.riskLevel === 'high') {
-            finalStatus = 'unsafe'; // Gas emission says high = unsafe, regardless of AI analysis
+        
+        if (aiApiAnalysis && aiApiAnalysis.spoilage_status) {
+            // AI API is PRIMARY - use its decision
+            finalStatus = aiApiAnalysis.spoilage_status;
+            
+            // Gas emission thresholds provide SUPPORT/validation
+            // If there's a significant mismatch, log it but trust AI
+            if (gasAnalysis.riskLevel === 'high' && finalStatus === 'safe') {
+                console.warn('⚠️ Validation Warning: Gas emission indicates HIGH risk but AI suggests SAFE. Trusting AI but logging discrepancy.');
+            } else if (gasAnalysis.riskLevel === 'low' && finalStatus === 'unsafe') {
+                console.warn('⚠️ Validation Warning: Gas emission indicates LOW risk but AI suggests UNSAFE. Trusting AI (may indicate other factors).');
+            }
         } else {
-            // Fallback to other methods only if gas analysis fails
-            finalStatus = gasBasedStatus || 
-                         spoilage_status || 
-                         (trained ? trained.status : null) || 
-                         (smart ? smart.status : null) || 
-                         'safe';
+            // Fallback: Use gas emission if AI API not available
+            if (gasAnalysis.riskLevel === 'low') {
+                finalStatus = 'safe';
+            } else if (gasAnalysis.riskLevel === 'medium') {
+                finalStatus = 'caution';
+            } else if (gasAnalysis.riskLevel === 'high') {
+                finalStatus = 'unsafe';
+            } else {
+                // Fallback to other methods
+                finalStatus = gasBasedStatus || 
+                             spoilage_status || 
+                             (trained ? trained.status : null) || 
+                             (smart ? smart.status : null) || 
+                             'safe';
+            }
         }
         
         console.log('  Final Status Determination:');
-        console.log('    Gas Risk Level:', gasAnalysis.riskLevel);
+        console.log('    AI API Status (Primary):', aiApiAnalysis ? aiApiAnalysis.spoilage_status : 'N/A');
+        console.log('    Gas Risk Level (Support):', gasAnalysis.riskLevel);
         console.log('    Final Status:', finalStatus);
         console.log('    Will Create Alert:', finalStatus !== 'safe');
         
-        const finalProbability = gasAnalysis.probability || 
+        // Use AI API probability as PRIMARY, with gas emission as support/fallback
+        const finalProbability = (aiApiAnalysis && aiApiAnalysis.spoilage_probability) ? aiApiAnalysis.spoilage_probability :
+                                 gasAnalysis.probability || 
                                  spoilage_probability || 
                                  (trained ? trained.probability : null) || 
                                  (smart ? smart.probability : null) || 
                                  75; // Default probability
         
-        const finalConfidence = gasAnalysis.confidence || 
+        // Use AI API confidence as PRIMARY, with gas emission as support/fallback
+        const finalConfidence = (aiApiAnalysis && aiApiAnalysis.confidence_score) ? aiApiAnalysis.confidence_score :
+                               gasAnalysis.confidence || 
                                confidence_score || 
                                (trained ? Math.max(trained.confidence, 85.0) : null) || 
                                (smart ? Math.max(smart.confidence, 85.0) : null) || 
@@ -545,15 +835,16 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
         // Insert ML prediction
         const result = await db.query(
             `INSERT INTO ml_predictions 
-            (user_id, food_id, food_name, food_category, temperature, humidity, gas_level,
+            (user_id, food_id, food_name, food_category, expiration_date, temperature, humidity, gas_level,
              spoilage_probability, spoilage_status, confidence_score, model_version, 
              prediction_data, recommendations, is_training_data)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 user_id,
                 food_id || null,
                 food_name,
                 food_category || null,
+                expirationDateValue,
                 finalTemperature,
                 finalHumidity,
                 finalGasLevel,
@@ -563,8 +854,17 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
                 (activeModel && activeModel.model_version) ? activeModel.model_version : '1.0',
                 JSON.stringify({
                     ai_analysis: true,
+                    ai_api_analysis: aiApiAnalysis || null,
                     timestamp: new Date().toISOString(),
                     model_type: trained ? 'smart_training_db' : (smart ? 'smartsense_table' : 'client_provided'),
+                    ai_api_support: aiApiAnalysis ? {
+                        status: aiApiAnalysis.spoilage_status,
+                        summary: aiApiAnalysis.summary,
+                        key_factors: aiApiAnalysis.key_factors,
+                        recommendations: aiApiAnalysis.recommendations,
+                        ai_insights: aiApiAnalysis.ai_insights,
+                        estimated_shelf_life_hours: aiApiAnalysis.estimated_shelf_life_hours
+                    } : null,
                     model: activeModel ? {
                         name: activeModel.model_name,
                         version: activeModel.model_version,
@@ -1012,13 +1312,13 @@ async function updateFoodExpiryFromMLPrediction(foodId, spoilageStatus, spoilage
         const day = String(newExpirationDate.getDate()).padStart(2, '0');
         const formattedDate = `${year}-${month}-${day}`;
         
-        // Update the food item's expiration date
+        // Update expiration_date in ml_predictions table for all predictions linked to this food_id
         await db.query(
-            'UPDATE food_items SET expiration_date = ?, updated_at = CURRENT_TIMESTAMP WHERE food_id = ?',
+            'UPDATE ml_predictions SET expiration_date = ? WHERE food_id = ?',
             [formattedDate, foodId]
         );
         
-        console.log(`Updated food item ${foodId} expiration date to ${formattedDate} based on ML prediction (${spoilageStatus}, ${spoilageProbability}%)`);
+        console.log(`Updated ml_predictions expiration_date for food_id ${foodId} to ${formattedDate} based on ML prediction (${spoilageStatus}, ${spoilageProbability}%)`);
         
         return true;
     } catch (error) {

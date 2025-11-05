@@ -75,6 +75,7 @@ router.get('/:id', Auth.authenticateToken, async (req, res) => {
                 food_id,
                 food_name,
                 food_category,
+                DATE_FORMAT(expiration_date, '%Y-%m-%d') AS expiration_date,
                 temperature,
                 humidity,
                 gas_level,
@@ -82,7 +83,7 @@ router.get('/:id', Auth.authenticateToken, async (req, res) => {
                 spoilage_probability,
                 confidence_score,
                 recommendations,
-                model_used,
+                model_version,
                 created_at,
                 is_training_data
             FROM ml_predictions 
@@ -113,7 +114,7 @@ router.get('/:id', Auth.authenticateToken, async (req, res) => {
                 spoilage_probability: predictionData.spoilage_probability,
                 confidence_score: predictionData.confidence_score,
                 recommendations: predictionData.recommendations,
-                model: predictionData.model_used,
+                model: predictionData.model_version,
                 created_at: predictionData.created_at,
                 is_training_data: predictionData.is_training_data
             }
@@ -337,9 +338,9 @@ function getDefaultThresholds(foodCategory) {
             safe_min: 30       // Normal humidity lower limit
         },
         gas_level: {
-            safe_max: 199,     // Low Risk (0-199 ppm)
-            caution_max: 399,  // Medium Risk (200-399 ppm)
-            unsafe_max: 500    // High Risk (400+ ppm)
+            safe_max: 49,     // Low Risk (0-49 ppm) - Fresh/Safe
+            caution_max: 69,  // Medium Risk (50-69 ppm) - Early Warning
+            unsafe_max: 70    // High Risk (70+ ppm) - Spoilage Detected (Based on observations)
         },
         confidence: 50,
         reasoning: "Default thresholds based on room temperature (15-30°C), normal humidity (30-70%), and gas emission levels"
@@ -360,7 +361,7 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
         timestamp: new Date().toISOString()
     });
     
-    const { food_id, food_name, food_category, temperature, humidity, gas_level, actual_outcome, is_training_data } = req.body;
+    const { food_id, food_name, food_category, temperature, humidity, gas_level, expiration_date, actual_outcome, is_training_data } = req.body;
     const user_id = req.user.user_id;
 
     if (!food_name || !food_category) {
@@ -373,6 +374,22 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
     
     // If no food_id provided, use null (will be set to NULL in database)
     const foodIdValue = food_id || null;
+    
+    // Get expiration_date from ml_predictions if food_id is provided, otherwise use from request body
+    let expirationDateValue = expiration_date || null;
+    if (foodIdValue && !expirationDateValue) {
+        try {
+            const prediction = await db.query(
+                'SELECT expiration_date FROM ml_predictions WHERE food_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1',
+                [foodIdValue, user_id]
+            );
+            if (prediction && prediction.length > 0 && prediction[0].expiration_date) {
+                expirationDateValue = prediction[0].expiration_date;
+            }
+        } catch (err) {
+            console.warn('Could not fetch expiration_date from ml_predictions:', err.message);
+        }
+    }
 
     // Use actual sensor data - no defaults, require real sensor readings
     if (temperature == null || humidity == null || gas_level == null) {
@@ -489,12 +506,12 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
         
         result = await db.query(
             `INSERT INTO ml_predictions 
-            (user_id, food_id, food_name, food_category, temperature, humidity, gas_level, 
+            (user_id, food_id, food_name, food_category, expiration_date, temperature, humidity, gas_level, 
              spoilage_probability, spoilage_status, confidence_score, model_version, prediction_data, recommendations,
              is_training_data, actual_outcome) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                user_id, foodIdValue, food_name, food_category, tempValue, humidityValue, gasValue,
+                user_id, foodIdValue, food_name, food_category, expirationDateValue, tempValue, humidityValue, gasValue,
                 prediction.spoilage_probability, prediction.spoilage_status, prediction.confidence_score,
                 (activeModel && activeModel.model_version) ? activeModel.model_version : '1.0',
                 JSON.stringify({
@@ -1035,13 +1052,13 @@ async function updateFoodExpiryFromMLPrediction(foodId, spoilageStatus, spoilage
         const day = String(newExpirationDate.getDate()).padStart(2, '0');
         const formattedDate = `${year}-${month}-${day}`;
         
-        // Update the food item's expiration date
+        // Update expiration_date in ml_predictions table for all predictions linked to this food_id
         await db.query(
-            'UPDATE food_items SET expiration_date = ?, updated_at = CURRENT_TIMESTAMP WHERE food_id = ?',
+            'UPDATE ml_predictions SET expiration_date = ? WHERE food_id = ?',
             [formattedDate, foodId]
         );
         
-        console.log(`Updated food item ${foodId} expiration date to ${formattedDate} based on ML prediction (${spoilageStatus}, ${spoilageProbability}%)`);
+        console.log(`Updated ml_predictions expiration_date for food_id ${foodId} to ${formattedDate} based on ML prediction (${spoilageStatus}, ${spoilageProbability}%)`);
         
         return true;
     } catch (error) {

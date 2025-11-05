@@ -99,14 +99,13 @@ router.post('/food-items', Auth.authenticateToken, async (req, res) => {
 
         // Insert food item with user_id, scan_timestamp, and scan_status
         const insertSql = `
-            INSERT INTO food_items (name, category, expiration_date, sensor_id, user_id, scan_timestamp, scan_status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO food_items (name, category, sensor_id, user_id, scan_timestamp, scan_status)
+            VALUES (?, ?, ?, ?, ?, ?)
         `;
         
         console.log('Inserting food item with data:', {
             name: name.toString().trim(),
             category: (category || '').toString().trim() || null,
-            expiration_date: expiration_date || null,
             sensor_id: sensor_id || null,
             user_id: req.user.user_id,
             scan_timestamp: scanTimestamp,
@@ -116,7 +115,6 @@ router.post('/food-items', Auth.authenticateToken, async (req, res) => {
         const result = await db.query(insertSql, [
             name.toString().trim(),
             (category || '').toString().trim() || null,
-            expiration_date || null,
             sensor_id || null,
             req.user.user_id,
             scanTimestamp,
@@ -136,7 +134,7 @@ router.post('/food-items', Auth.authenticateToken, async (req, res) => {
     }
 });
 
-// Update food item expiry date (authenticated user)
+// Update food item expiry date (authenticated user) - Now updates ml_predictions table
 router.put('/food-items/:id/expiry', Auth.authenticateToken, async (req, res) => {
     try {
         const foodId = parseInt(req.params.id, 10);
@@ -150,16 +148,16 @@ router.put('/food-items/:id/expiry', Auth.authenticateToken, async (req, res) =>
             return res.status(400).json({ success: false, message: 'expiration_date is required (YYYY-MM-DD)' });
         }
 
-        // Update without user_id column constraint
-        const updateSql = `UPDATE food_items SET expiration_date = ? WHERE food_id = ?`;
-        const result = await db.query(updateSql, [expiration_date, foodId]);
+        // Update expiration_date in ml_predictions table for all predictions linked to this food_id
+        const updateSql = `UPDATE ml_predictions SET expiration_date = ? WHERE food_id = ? AND user_id = ?`;
+        const result = await db.query(updateSql, [expiration_date, foodId, req.user.user_id]);
 
         if (!result.affectedRows) {
-            return res.status(404).json({ success: false, message: 'Food item not found' });
+            return res.status(404).json({ success: false, message: 'Food item or predictions not found' });
         }
 
         try { await Auth.logActivity(req.user.user_id, `Updated expiry date for food item ID ${foodId} to ${expiration_date}`, db); } catch (_) {}
-        res.json({ success: true, food_id: foodId, expiration_date });
+        res.json({ success: true, food_id: foodId, expiration_date, updated_predictions: result.affectedRows });
     } catch (error) {
         console.error('Update food expiry error:', error);
         res.status(500).json({ success: false, message: 'Internal server error' });
@@ -173,14 +171,9 @@ router.put('/food-items/:id', Auth.authenticateToken, async (req, res) => {
         const { expiration_date, scan_status, scan_timestamp } = req.body;
         const userId = req.user.user_id;
 
-        // Build update fields dynamically
+        // Build update fields dynamically (expiration_date is now in ml_predictions, not food_items)
         let updateFields = [];
         let updateValues = [];
-
-        if (expiration_date !== undefined) {
-            updateFields.push('expiration_date = ?');
-            updateValues.push(expiration_date);
-        }
 
         if (scan_status !== undefined) {
             updateFields.push('scan_status = ?');
@@ -192,19 +185,32 @@ router.put('/food-items/:id', Auth.authenticateToken, async (req, res) => {
             updateValues.push(scan_timestamp);
         }
 
-        if (updateFields.length === 0) {
-            return res.status(400).json({ success: false, message: 'No fields to update' });
+        // Handle expiration_date separately - update ml_predictions table
+        if (expiration_date !== undefined) {
+            try {
+                await db.query(
+                    'UPDATE ml_predictions SET expiration_date = ? WHERE food_id = ? AND user_id = ?',
+                    [expiration_date, id, userId]
+                );
+            } catch (expiryError) {
+                console.warn('Could not update expiration_date in ml_predictions:', expiryError.message);
+            }
         }
 
-        // Always update the updated_at timestamp
-        updateFields.push('updated_at = NOW()');
-        updateValues.push(id, userId);
+        // Only update food_items if there are other fields to update
+        if (updateFields.length > 0) {
+            // Always update the updated_at timestamp
+            updateFields.push('updated_at = NOW()');
+            updateValues.push(id, userId);
 
-        const sql = `UPDATE food_items SET ${updateFields.join(', ')} WHERE food_id = ? AND user_id = ?`;
-        const result = await db.query(sql, updateValues);
+            const sql = `UPDATE food_items SET ${updateFields.join(', ')} WHERE food_id = ? AND user_id = ?`;
+            const result = await db.query(sql, updateValues);
 
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ success: false, message: 'Food item not found' });
+            if (result.affectedRows === 0 && expiration_date === undefined) {
+                return res.status(404).json({ success: false, message: 'Food item not found' });
+            }
+        } else if (expiration_date === undefined) {
+            return res.status(400).json({ success: false, message: 'No fields to update' });
         }
 
         res.json({ success: true, message: 'Food item updated successfully' });
@@ -904,7 +910,7 @@ router.get('/food-spoilage-report', Auth.authenticateToken, async (req, res) => 
                 mp.prediction_id AS foodId,
                 mp.food_name AS foodItem,
                 COALESCE(mp.food_category, 'Unknown') AS category,
-                fi.expiration_date AS expiryDate,
+                DATE_FORMAT(mp.expiration_date, '%Y-%m-%d') AS expiryDate,
                 mp.created_at AS createdAt,
                 CASE 
                     WHEN mp.spoilage_status = 'safe' THEN 'Safe'
@@ -920,7 +926,6 @@ router.get('/food-spoilage-report', Auth.authenticateToken, async (req, res) => 
                 ) AS alertCount,
                 mp.recommendations AS 'RECOMMENDATIONS'
             FROM ml_predictions mp
-            LEFT JOIN food_items fi ON mp.food_id = fi.food_id AND mp.user_id = fi.user_id
             ${whereClause}
             ORDER BY mp.created_at DESC
             LIMIT ? OFFSET ?
@@ -941,7 +946,6 @@ router.get('/food-spoilage-report', Auth.authenticateToken, async (req, res) => 
         const countQuery = `
             SELECT COUNT(*) AS total
             FROM ml_predictions mp
-            LEFT JOIN food_items fi ON mp.food_id = fi.food_id AND mp.user_id = fi.user_id
             ${whereClause}
         `;
         console.log('🔍 Count Query:', countQuery);
@@ -1111,12 +1115,12 @@ router.get('/spoilage-stats', Auth.authenticateToken, async (req, res) => {
             SELECT
                 COUNT(DISTINCT fi.food_id) AS Total_Items,
                 SUM(CASE 
-                        WHEN fi.expiration_date >= CURDATE() 
+                        WHEN (mp.expiration_date >= CURDATE() OR mp.expiration_date IS NULL) 
                                  AND (mp.spoilage_status = 'safe' OR mp.spoilage_status IS NULL) THEN 1 
                         ELSE 0 
                     END) AS Fresh,
                 SUM(CASE 
-                        WHEN fi.expiration_date >= CURDATE() 
+                        WHEN (mp.expiration_date >= CURDATE() OR mp.expiration_date IS NULL) 
                                  AND mp.spoilage_status = 'caution' THEN 1
                         ELSE 0 
                     END) AS At_Risk,
@@ -1125,7 +1129,7 @@ router.get('/spoilage-stats', Auth.authenticateToken, async (req, res) => {
                         ELSE 0
                     END) AS Spoiled,
                 SUM(CASE 
-                        WHEN fi.expiration_date < CURDATE() THEN 1
+                        WHEN mp.expiration_date < CURDATE() THEN 1
                         ELSE 0
                     END) AS Expired
             FROM food_items fi
@@ -1225,12 +1229,12 @@ router.get('/spoilage-chart-data', Auth.authenticateToken, async (req, res) => {
                 fi.name AS food_name,
                 COUNT(DISTINCT fi.food_id) AS total_items,
                 SUM(CASE 
-                        WHEN mp.spoilage_status = 'unsafe' OR fi.expiration_date < CURDATE() THEN 1 
+                        WHEN mp.spoilage_status = 'unsafe' OR mp.expiration_date < CURDATE() THEN 1 
                     ELSE 0 
                 END) AS spoiled_items,
                 ROUND(
                     (SUM(CASE 
-                            WHEN mp.spoilage_status = 'unsafe' OR fi.expiration_date < CURDATE() THEN 1 
+                            WHEN mp.spoilage_status = 'unsafe' OR mp.expiration_date < CURDATE() THEN 1 
                         ELSE 0 
                     END) / COUNT(DISTINCT fi.food_id)) * 100, 1
                 ) AS spoilage_rate
@@ -1326,18 +1330,24 @@ router.get('/spoiled-foods-summary', Auth.authenticateToken, async (req, res) =>
                 fi.name AS food_name,
                 COUNT(fi.food_id) AS total_items,
                 SUM(CASE 
-                    WHEN a.alert_level = 'High' OR fi.expiration_date < CURDATE() THEN 1 
+                    WHEN a.alert_level = 'High' OR (mp.expiration_date IS NOT NULL AND mp.expiration_date < CURDATE()) THEN 1 
                     ELSE 0 
                 END) AS spoiled_items,
                 ROUND(
                     (SUM(CASE 
-                        WHEN a.alert_level = 'High' OR fi.expiration_date < CURDATE() THEN 1 
+                        WHEN a.alert_level = 'High' OR (mp.expiration_date IS NOT NULL AND mp.expiration_date < CURDATE()) THEN 1 
                         ELSE 0 
                     END) / COUNT(fi.food_id)) * 100, 1
                 ) AS spoilage_rate
             FROM food_items fi
             LEFT JOIN sensor s ON fi.sensor_id = s.sensor_id
             LEFT JOIN alerts a ON s.sensor_id = a.sensor_id
+            LEFT JOIN ml_predictions mp ON fi.food_id = mp.food_id 
+                AND mp.prediction_id = (
+                    SELECT MAX(mp2.prediction_id) 
+                    FROM ml_predictions mp2 
+                    WHERE mp2.food_id = fi.food_id
+                )
             WHERE s.user_id = ?
             GROUP BY fi.name
             HAVING spoiled_items > 0  -- Only show foods that actually have spoilage
@@ -1432,7 +1442,7 @@ router.get('/detailed-spoilage-report', Auth.authenticateToken, async (req, res)
                     whereClause += ' AND mp.spoilage_status = "unsafe"';
                     break;
                 case 'expired':
-                    whereClause += ' AND (fi.expiration_date < CURDATE() OR mp.spoilage_status = "unsafe")';
+                    whereClause += ' AND (mp.expiration_date < CURDATE() OR mp.spoilage_status = "unsafe")';
                     break;
             }
         }
@@ -1443,7 +1453,7 @@ router.get('/detailed-spoilage-report', Auth.authenticateToken, async (req, res)
                 mp.prediction_id AS 'FOOD ID',
                 mp.food_name AS 'FOOD ITEM',
                 COALESCE(mp.food_category, 'Unknown') AS 'CATEGORY',
-                fi.expiration_date AS 'EXPIRY DATE',
+                DATE_FORMAT(mp.expiration_date, '%Y-%m-%d') AS 'EXPIRY DATE',
                 mp.created_at AS 'CREATED AT',
                 CASE 
                     WHEN mp.spoilage_status = 'safe' THEN 'Safe'
@@ -1459,7 +1469,6 @@ router.get('/detailed-spoilage-report', Auth.authenticateToken, async (req, res)
                 ) AS 'ALERT COUNT',
                 mp.recommendations AS 'RECOMMENDATIONS'
             FROM ml_predictions mp
-            LEFT JOIN food_items fi ON mp.food_id = fi.food_id AND mp.user_id = fi.user_id
             ${whereClause}
             ORDER BY mp.created_at DESC
             LIMIT ? OFFSET ?
@@ -1583,9 +1592,8 @@ router.get('/latest-scan-result', Auth.authenticateToken, async (req, res) => {
                 mp.confidence_score,
                 mp.recommendations,
                 mp.created_at,
-                fi.expiration_date
+                DATE_FORMAT(mp.expiration_date, '%Y-%m-%d') AS expiration_date
             FROM ml_predictions mp
-            LEFT JOIN food_items fi ON mp.food_id = fi.food_id AND mp.user_id = fi.user_id
             WHERE mp.user_id = ?
             ORDER BY mp.created_at DESC
             LIMIT 1
@@ -1611,7 +1619,8 @@ router.get('/latest-scan-result', Auth.authenticateToken, async (req, res) => {
             let daysLeft = 0;
             if (scanData.expiration_date) {
                 const today = new Date();
-                const expiryDate = new Date(scanData.expiration_date);
+                today.setHours(0, 0, 0, 0); // Reset time to midnight for accurate day calculation
+                const expiryDate = new Date(scanData.expiration_date + 'T00:00:00');
                 const diffTime = expiryDate - today;
                 daysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
                 
@@ -1659,7 +1668,7 @@ router.get('/latest-scan-result', Auth.authenticateToken, async (req, res) => {
                         humidity: `${scanData.humidity}%`,
                         gas: `${scanData.gas_level} ppm`
                     },
-                    expiryDate: scanData.expiration_date,
+                    expiryDate: scanData.expiration_date || null,
                     expiryStatus: expiryStatus,
                     daysLeft: daysLeft,
                     recommendations: recommendations,
