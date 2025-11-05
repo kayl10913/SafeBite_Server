@@ -348,7 +348,7 @@ router.get('/data', async (req, res) => {
                         const lastReadingTime = new Date(sensor.date_recorded).getTime();
                         const currentTime = Date.now();
                         const timeDiff = currentTime - lastReadingTime;
-                        const isOnline = (timeDiff <= 300000); // 5 minutes = 300000 milliseconds
+                        const isOnline = (timeDiff <= 120000); // 2 minutes
                         
                         // Create meaningful device identifier
                         const deviceId = 'SENSOR_' + sensor.sensor_type.toUpperCase() + '_' + sensor.sensor_id;
@@ -673,12 +673,13 @@ router.get('/gauges', async (req, res) => {
             };
 
             if (sensorType && gaugeData[sensorType]) {
+                const isRecent = row.date_recorded ? (Date.now() - new Date(row.date_recorded).getTime()) <= 120000 : false; // 2 minutes
                 gaugeData[sensorType] = {
                     value: row.value != null ? parseFloat(row.value).toFixed(2) : 0,
                     unit: row.unit || def.unit,
                     min: parseFloat(min).toFixed(2),
                     max: parseFloat(max).toFixed(2),
-                    status: row.date_recorded ? 'online' : 'offline',
+                    status: isRecent ? 'online' : 'offline',
                     timestamp: row.date_recorded || null
                 };
             }
@@ -703,7 +704,7 @@ router.get('/gauges', async (req, res) => {
                     r.unit,
                     r.timestamp,
                     CASE 
-                        WHEN TIMESTAMPDIFF(MINUTE, r.timestamp, NOW()) <= 5 THEN 'online'
+                        WHEN TIMESTAMPDIFF(MINUTE, r.timestamp, NOW()) <= 2 THEN 'online'
                         ELSE 'offline'
                     END as status
                 FROM sensor s
