@@ -399,72 +399,86 @@ router.post('/training-data', Auth.authenticateToken, async (req, res) => {
             });
         }
 
-        // Use sensor data from request body if provided, otherwise fetch from database
+        // PRIORITY: Use saved sensor data from database, fallback to request body
         let finalTemperature = null;
         let finalHumidity = null;
         let finalGasLevel = null;
         
-        // Check if sensor data is provided in request body
-        if (temperature !== undefined && humidity !== undefined && gas_level !== undefined) {
-            console.log('Using sensor data from request body:', {
-                temperature: temperature,
-                humidity: humidity,
-                gas_level: gas_level
-            });
-            finalTemperature = temperature;
-            finalHumidity = humidity;
-            finalGasLevel = gas_level;
-        } else {
-            // Fallback: get latest sensor readings from database
-            console.log('Getting latest sensor readings from database...');
+        // First, try to get latest sensor readings from database (saved data)
+        console.log('📊 Getting latest saved sensor readings from database for ML training...');
+        
+        try {
+            // Get latest temperature reading
+            const [tempReading] = await db.query(
+                `SELECT r.value, r.timestamp FROM readings r 
+                 JOIN sensor s ON r.sensor_id = s.sensor_id 
+                 WHERE s.type = 'Temperature' AND s.user_id = ? 
+                 ORDER BY r.timestamp DESC LIMIT 1`,
+                [user_id]
+            );
+            if (tempReading.length > 0) {
+                finalTemperature = parseFloat(tempReading[0].value);
+                console.log(`✅ Using saved temperature: ${finalTemperature}°C (timestamp: ${tempReading[0].timestamp})`);
+            }
             
-            try {
-                // Get latest temperature reading
-                const [tempReading] = await db.query(
-                    `SELECT r.value FROM readings r 
-                     JOIN sensor s ON r.sensor_id = s.sensor_id 
-                     WHERE s.type = 'Temperature' AND s.user_id = ? 
-                     ORDER BY r.timestamp DESC LIMIT 1`,
-                    [user_id]
-                );
-                if (tempReading.length > 0) {
-                    finalTemperature = tempReading[0].value;
-                }
-                
-                // Get latest humidity reading
-                const [humidityReading] = await db.query(
-                    `SELECT r.value FROM readings r 
-                     JOIN sensor s ON r.sensor_id = s.sensor_id 
-                     WHERE s.type = 'Humidity' AND s.user_id = ? 
-                     ORDER BY r.timestamp DESC LIMIT 1`,
-                    [user_id]
-                );
-                if (humidityReading.length > 0) {
-                    finalHumidity = humidityReading[0].value;
-                }
-                
-                // Get latest gas reading
-                const [gasReading] = await db.query(
-                    `SELECT r.value FROM readings r 
-                     JOIN sensor s ON r.sensor_id = s.sensor_id 
-                     WHERE s.type = 'Gas' AND s.user_id = ? 
-                     ORDER BY r.timestamp DESC LIMIT 1`,
-                    [user_id]
-                );
-                if (gasReading.length > 0) {
-                    finalGasLevel = gasReading[0].value;
-                }
-                
-                console.log('Using latest sensor readings from database:', {
-                    temperature: finalTemperature,
-                    humidity: finalHumidity,
-                    gas_level: finalGasLevel
-                });
-            } catch (sensorError) {
-                console.error('Failed to get latest sensor readings:', sensorError);
+            // Get latest humidity reading
+            const [humidityReading] = await db.query(
+                `SELECT r.value, r.timestamp FROM readings r 
+                 JOIN sensor s ON r.sensor_id = s.sensor_id 
+                 WHERE s.type = 'Humidity' AND s.user_id = ? 
+                 ORDER BY r.timestamp DESC LIMIT 1`,
+                [user_id]
+            );
+            if (humidityReading.length > 0) {
+                finalHumidity = parseFloat(humidityReading[0].value);
+                console.log(`✅ Using saved humidity: ${finalHumidity}% (timestamp: ${humidityReading[0].timestamp})`);
+            }
+            
+            // Get latest gas reading
+            const [gasReading] = await db.query(
+                `SELECT r.value, r.timestamp FROM readings r 
+                 JOIN sensor s ON r.sensor_id = s.sensor_id 
+                 WHERE s.type = 'Gas' AND s.user_id = ? 
+                 ORDER BY r.timestamp DESC LIMIT 1`,
+                [user_id]
+            );
+            if (gasReading.length > 0) {
+                finalGasLevel = parseFloat(gasReading[0].value);
+                console.log(`✅ Using saved gas level: ${finalGasLevel} ppm (timestamp: ${gasReading[0].timestamp})`);
+            }
+            
+            // If any sensor data is missing from database, use request body as fallback
+            if (finalTemperature === null && temperature !== undefined) {
+                finalTemperature = parseFloat(temperature);
+                console.log(`⚠️ Temperature not found in database, using request body: ${finalTemperature}°C`);
+            }
+            if (finalHumidity === null && humidity !== undefined) {
+                finalHumidity = parseFloat(humidity);
+                console.log(`⚠️ Humidity not found in database, using request body: ${finalHumidity}%`);
+            }
+            if (finalGasLevel === null && gas_level !== undefined) {
+                finalGasLevel = parseFloat(gas_level);
+                console.log(`⚠️ Gas level not found in database, using request body: ${finalGasLevel} ppm`);
+            }
+            
+            console.log('📊 Final sensor data for ML training:', {
+                temperature: finalTemperature,
+                humidity: finalHumidity,
+                gas_level: finalGasLevel,
+                source: finalTemperature !== null && finalHumidity !== null && finalGasLevel !== null ? 'database' : 'mixed'
+            });
+        } catch (sensorError) {
+            console.error('❌ Failed to get latest sensor readings from database:', sensorError);
+            // Fallback to request body if database query fails
+            if (temperature !== undefined && humidity !== undefined && gas_level !== undefined) {
+                console.log('⚠️ Using request body data as fallback due to database error');
+                finalTemperature = parseFloat(temperature);
+                finalHumidity = parseFloat(humidity);
+                finalGasLevel = parseFloat(gas_level);
+            } else {
                 return res.status(500).json({
                     success: false,
-                    error: 'Failed to retrieve sensor data for ML training'
+                    error: 'Failed to retrieve sensor data for ML training: ' + sensorError.message
                 });
             }
         }
@@ -637,72 +651,86 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
             });
         }
 
-        // Use sensor data from request body if provided, otherwise fetch from database
+        // PRIORITY: Use saved sensor data from database, fallback to request body
         let finalTemperature = null;
         let finalHumidity = null;
         let finalGasLevel = null;
         
-        // Check if sensor data is provided in request body
-        if (temperature !== undefined && humidity !== undefined && gas_level !== undefined) {
-            console.log('Using sensor data from request body for prediction:', {
-                temperature: temperature,
-                humidity: humidity,
-                gas_level: gas_level
-            });
-            finalTemperature = temperature;
-            finalHumidity = humidity;
-            finalGasLevel = gas_level;
-        } else {
-            // Fallback: get latest sensor readings from database
-            console.log('Getting latest sensor readings from database for prediction...');
+        // First, try to get latest sensor readings from database (saved data)
+        console.log('📊 Getting latest saved sensor readings from database for prediction...');
+        
+        try {
+            // Get latest temperature reading
+            const [tempReading] = await db.query(
+                `SELECT r.value, r.timestamp FROM readings r 
+                 JOIN sensor s ON r.sensor_id = s.sensor_id 
+                 WHERE s.type = 'Temperature' AND s.user_id = ? 
+                 ORDER BY r.timestamp DESC LIMIT 1`,
+                [user_id]
+            );
+            if (tempReading.length > 0) {
+                finalTemperature = parseFloat(tempReading[0].value);
+                console.log(`✅ Using saved temperature: ${finalTemperature}°C (timestamp: ${tempReading[0].timestamp})`);
+            }
             
-            try {
-                // Get latest temperature reading
-                const [tempReading] = await db.query(
-                    `SELECT r.value FROM readings r 
-                     JOIN sensor s ON r.sensor_id = s.sensor_id 
-                     WHERE s.type = 'Temperature' AND s.user_id = ? 
-                     ORDER BY r.timestamp DESC LIMIT 1`,
-                    [user_id]
-                );
-                if (tempReading.length > 0) {
-                    finalTemperature = tempReading[0].value;
-                }
-                
-                // Get latest humidity reading
-                const [humidityReading] = await db.query(
-                    `SELECT r.value FROM readings r 
-                     JOIN sensor s ON r.sensor_id = s.sensor_id 
-                     WHERE s.type = 'Humidity' AND s.user_id = ? 
-                     ORDER BY r.timestamp DESC LIMIT 1`,
-                    [user_id]
-                );
-                if (humidityReading.length > 0) {
-                    finalHumidity = humidityReading[0].value;
-                }
-                
-                // Get latest gas reading
-                const [gasReading] = await db.query(
-                    `SELECT r.value FROM readings r 
-                     JOIN sensor s ON r.sensor_id = s.sensor_id 
-                     WHERE s.type = 'Gas' AND s.user_id = ? 
-                     ORDER BY r.timestamp DESC LIMIT 1`,
-                    [user_id]
-                );
-                if (gasReading.length > 0) {
-                    finalGasLevel = gasReading[0].value;
-                }
-                
-                console.log('Using latest sensor readings from database for prediction:', {
-                    temperature: finalTemperature,
-                    humidity: finalHumidity,
-                    gas_level: finalGasLevel
-                });
-            } catch (sensorError) {
-                console.error('Failed to get latest sensor readings:', sensorError);
+            // Get latest humidity reading
+            const [humidityReading] = await db.query(
+                `SELECT r.value, r.timestamp FROM readings r 
+                 JOIN sensor s ON r.sensor_id = s.sensor_id 
+                 WHERE s.type = 'Humidity' AND s.user_id = ? 
+                 ORDER BY r.timestamp DESC LIMIT 1`,
+                [user_id]
+            );
+            if (humidityReading.length > 0) {
+                finalHumidity = parseFloat(humidityReading[0].value);
+                console.log(`✅ Using saved humidity: ${finalHumidity}% (timestamp: ${humidityReading[0].timestamp})`);
+            }
+            
+            // Get latest gas reading
+            const [gasReading] = await db.query(
+                `SELECT r.value, r.timestamp FROM readings r 
+                 JOIN sensor s ON r.sensor_id = s.sensor_id 
+                 WHERE s.type = 'Gas' AND s.user_id = ? 
+                 ORDER BY r.timestamp DESC LIMIT 1`,
+                [user_id]
+            );
+            if (gasReading.length > 0) {
+                finalGasLevel = parseFloat(gasReading[0].value);
+                console.log(`✅ Using saved gas level: ${finalGasLevel} ppm (timestamp: ${gasReading[0].timestamp})`);
+            }
+            
+            // If any sensor data is missing from database, use request body as fallback
+            if (finalTemperature === null && temperature !== undefined) {
+                finalTemperature = parseFloat(temperature);
+                console.log(`⚠️ Temperature not found in database, using request body: ${finalTemperature}°C`);
+            }
+            if (finalHumidity === null && humidity !== undefined) {
+                finalHumidity = parseFloat(humidity);
+                console.log(`⚠️ Humidity not found in database, using request body: ${finalHumidity}%`);
+            }
+            if (finalGasLevel === null && gas_level !== undefined) {
+                finalGasLevel = parseFloat(gas_level);
+                console.log(`⚠️ Gas level not found in database, using request body: ${finalGasLevel} ppm`);
+            }
+            
+            console.log('📊 Final sensor data for prediction:', {
+                temperature: finalTemperature,
+                humidity: finalHumidity,
+                gas_level: finalGasLevel,
+                source: finalTemperature !== null && finalHumidity !== null && finalGasLevel !== null ? 'database' : 'mixed'
+            });
+        } catch (sensorError) {
+            console.error('❌ Failed to get latest sensor readings from database:', sensorError);
+            // Fallback to request body if database query fails
+            if (temperature !== undefined && humidity !== undefined && gas_level !== undefined) {
+                console.log('⚠️ Using request body data as fallback due to database error');
+                finalTemperature = parseFloat(temperature);
+                finalHumidity = parseFloat(humidity);
+                finalGasLevel = parseFloat(gas_level);
+            } else {
                 return res.status(500).json({
                     success: false,
-                    error: 'Failed to retrieve sensor data for ML prediction'
+                    error: 'Failed to retrieve sensor data for ML prediction: ' + sensorError.message
                 });
             }
         }
@@ -755,23 +783,52 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
         console.log('  Temperature Check: 61.10°C > 26°C threshold?', parseFloat(finalTemperature) > 26);
         
         // Get AI API analysis for enhanced prediction support
+        // AI is used as PRIMARY decision maker with gas emission as SUPPORT/validation
         let aiApiAnalysis = null;
+        let aiAnalysisAttempted = false;
+        let aiAnalysisError = null;
+        
         if (geminiConfig.apiKey) {
             try {
-                console.log('🤖 Calling AI API for enhanced prediction support...');
+                aiAnalysisAttempted = true;
+                console.log('🤖 [SmartSense Scanner] Calling AI API for enhanced prediction support...');
+                console.log('🤖 [SmartSense Scanner] Food:', food_name || food_category || 'Food');
+                console.log('🤖 [SmartSense Scanner] Sensor Data:', {
+                    temperature: parseFloat(finalTemperature),
+                    humidity: parseFloat(finalHumidity),
+                    gas_level: parseFloat(finalGasLevel)
+                });
+                
                 aiApiAnalysis = await getAIAnalysisForPrediction(
                     food_name || food_category || 'Food',
                     parseFloat(finalTemperature),
                     parseFloat(finalHumidity),
                     parseFloat(finalGasLevel)
                 );
-                console.log('  AI API Analysis Result:', aiApiAnalysis);
+                
+                if (aiApiAnalysis) {
+                    console.log('✅ [SmartSense Scanner] AI API Analysis Success:', {
+                        status: aiApiAnalysis.spoilage_status,
+                        probability: aiApiAnalysis.spoilage_probability,
+                        confidence: aiApiAnalysis.confidence_score,
+                        risk_level: aiApiAnalysis.risk_level,
+                        summary: aiApiAnalysis.summary,
+                        key_factors: aiApiAnalysis.key_factors,
+                        recommendations: aiApiAnalysis.recommendations,
+                        estimated_shelf_life_hours: aiApiAnalysis.estimated_shelf_life_hours,
+                        ai_insights: aiApiAnalysis.ai_insights
+                    });
+                } else {
+                    console.warn('⚠️ [SmartSense Scanner] AI API returned null - using fallback methods');
+                }
             } catch (aiError) {
-                console.warn('  AI API analysis failed:', aiError.message);
-                // Continue without AI analysis if it fails
+                aiAnalysisError = aiError;
+                console.error('❌ [SmartSense Scanner] AI API analysis failed:', aiError.message);
+                console.error('❌ [SmartSense Scanner] AI Error Stack:', aiError.stack);
+                // Continue without AI analysis if it fails - will use fallback methods
             }
         } else {
-            console.log('  AI API not configured (GEMINI_API_KEY not set)');
+            console.warn('⚠️ [SmartSense Scanner] AI API not configured (GEMINI_API_KEY not set) - using fallback methods');
         }
         
         // Prioritize gas emission analysis first, then AI analysis, then training data, then SmartSense assessment
@@ -792,8 +849,9 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
         const manualOverride = req.body.manual_override || req.body.manualOverride || req.body.user_reported_spoiled || null;
         const smart = assessSmartSenseStatus(food_name, food_category, parseFloat(finalTemperature), parseFloat(finalHumidity), parseFloat(finalGasLevel), manualOverride);
         
-        console.log('  Gas Emission Analysis (Support):', gasAnalysis.riskLevel, gasBasedStatus);
-        console.log('  AI API Analysis (Primary):', aiApiAnalysis ? aiApiAnalysis.spoilage_status : 'None');
+        console.log('📊 [SmartSense Scanner] Prediction Analysis Summary:');
+        console.log('  Gas Emission Analysis (Support/Validation):', gasAnalysis.riskLevel, gasBasedStatus);
+        console.log('  AI API Analysis (Primary):', aiApiAnalysis ? aiApiAnalysis.spoilage_status : (aiAnalysisAttempted ? 'Failed' : 'Not Attempted'));
         console.log('  AI Analysis Status (from body):', spoilage_status);
         console.log('  Training Data Assessment:', trained ? trained.status : 'None');
         console.log('  SmartSense Assessment:', smart ? smart.status : 'None');
@@ -801,20 +859,26 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
         // Priority order: AI API (Primary) > Gas emission (Support/Validation) > Training data > SmartSense > Body spoilage_status
         // AI API analysis is the PRIMARY decision maker, gas emission thresholds are used for SUPPORT/validation
         let finalStatus;
+        let statusSource = 'unknown';
         
         if (aiApiAnalysis && aiApiAnalysis.spoilage_status) {
             // AI API is PRIMARY - use its decision
             finalStatus = aiApiAnalysis.spoilage_status;
+            statusSource = 'ai_api';
             
             // Gas emission thresholds provide SUPPORT/validation
             // If there's a significant mismatch, log it but trust AI
             if (gasAnalysis.riskLevel === 'high' && finalStatus === 'safe') {
-                console.warn('⚠️ Validation Warning: Gas emission indicates HIGH risk but AI suggests SAFE. Trusting AI but logging discrepancy.');
+                console.warn('⚠️ [SmartSense Scanner] Validation Warning: Gas emission indicates HIGH risk but AI suggests SAFE. Trusting AI but logging discrepancy.');
+                console.warn('⚠️ [SmartSense Scanner] AI may have detected other factors (temperature, humidity, food type) that override gas reading.');
             } else if (gasAnalysis.riskLevel === 'low' && finalStatus === 'unsafe') {
-                console.warn('⚠️ Validation Warning: Gas emission indicates LOW risk but AI suggests UNSAFE. Trusting AI (may indicate other factors).');
+                console.warn('⚠️ [SmartSense Scanner] Validation Warning: Gas emission indicates LOW risk but AI suggests UNSAFE. Trusting AI (may indicate other factors like temperature, humidity, or food type).');
+            } else {
+                console.log('✅ [SmartSense Scanner] AI and Gas Emission analysis are in agreement');
             }
         } else {
             // Fallback: Use gas emission if AI API not available
+            statusSource = 'gas_emission';
             if (gasAnalysis.riskLevel === 'low') {
                 finalStatus = 'safe';
             } else if (gasAnalysis.riskLevel === 'medium') {
@@ -823,16 +887,34 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
                 finalStatus = 'unsafe';
             } else {
                 // Fallback to other methods
-                finalStatus = gasBasedStatus || 
-                             spoilage_status || 
-                             (trained ? trained.status : null) || 
-                             (smart ? smart.status : null) || 
-                             'safe';
+                if (trained && trained.status) {
+                    finalStatus = trained.status;
+                    statusSource = 'training_data';
+                } else if (smart && smart.status) {
+                    finalStatus = smart.status;
+                    statusSource = 'smartsense';
+                } else if (spoilage_status) {
+                    finalStatus = spoilage_status;
+                    statusSource = 'body_request';
+                } else {
+                    finalStatus = 'safe';
+                    statusSource = 'default';
+                }
+            }
+            
+            if (aiAnalysisAttempted && !aiApiAnalysis) {
+                console.warn('⚠️ [SmartSense Scanner] AI analysis was attempted but failed - using fallback method:', statusSource);
+                if (aiAnalysisError) {
+                    console.warn('⚠️ [SmartSense Scanner] AI Error:', aiAnalysisError.message);
+                }
+            } else if (!aiAnalysisAttempted) {
+                console.warn('⚠️ [SmartSense Scanner] AI analysis not attempted (API key not configured) - using fallback method:', statusSource);
             }
         }
         
-        console.log('  Final Status Determination:');
-        console.log('    AI API Status (Primary):', aiApiAnalysis ? aiApiAnalysis.spoilage_status : 'N/A');
+        console.log('📊 [SmartSense Scanner] Final Status Determination:');
+        console.log('    Status Source:', statusSource);
+        console.log('    AI API Status (Primary):', aiApiAnalysis ? aiApiAnalysis.spoilage_status : (aiAnalysisAttempted ? 'Failed' : 'Not Attempted'));
         console.log('    Gas Risk Level (Support):', gasAnalysis.riskLevel);
         console.log('    Final Status:', finalStatus);
         console.log('    Will Create Alert:', finalStatus !== 'safe');
@@ -853,9 +935,17 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
                                (smart ? Math.max(smart.confidence, 85.0) : null) || 
                                85.0; // Default confidence
         
-        console.log('  Final Status Used:', finalStatus);
-        console.log('  Final Probability Used:', finalProbability);
-        console.log('  Final Confidence Used:', finalConfidence);
+        console.log('✅ [SmartSense Scanner] Final Prediction Values:');
+        console.log('    Final Status:', finalStatus);
+        console.log('    Final Probability:', finalProbability);
+        console.log('    Final Confidence:', finalConfidence);
+        console.log('    Status Source:', statusSource);
+        if (aiApiAnalysis) {
+            console.log('    AI Insights:', aiApiAnalysis.ai_insights || 'None');
+            console.log('    AI Summary:', aiApiAnalysis.summary || 'None');
+            console.log('    AI Key Factors:', aiApiAnalysis.key_factors || []);
+            console.log('    AI Recommendations:', aiApiAnalysis.recommendations || []);
+        }
 
         // Insert ML prediction
         const result = await db.query(
@@ -880,16 +970,31 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
                 JSON.stringify({
                     ai_analysis: true,
                     ai_api_analysis: aiApiAnalysis || null,
+                    ai_analysis_attempted: aiAnalysisAttempted,
+                    ai_analysis_error: aiAnalysisError ? aiAnalysisError.message : null,
+                    status_source: statusSource,
                     timestamp: new Date().toISOString(),
                     model_type: trained ? 'smart_training_db' : (smart ? 'smartsense_table' : 'client_provided'),
                     ai_api_support: aiApiAnalysis ? {
                         status: aiApiAnalysis.spoilage_status,
+                        probability: aiApiAnalysis.spoilage_probability,
+                        confidence: aiApiAnalysis.confidence_score,
+                        risk_level: aiApiAnalysis.risk_level,
                         summary: aiApiAnalysis.summary,
                         key_factors: aiApiAnalysis.key_factors,
                         recommendations: aiApiAnalysis.recommendations,
                         ai_insights: aiApiAnalysis.ai_insights,
-                        estimated_shelf_life_hours: aiApiAnalysis.estimated_shelf_life_hours
+                        estimated_shelf_life_hours: aiApiAnalysis.estimated_shelf_life_hours,
+                        source: 'ai_api'
                     } : null,
+                    gas_emission_support: {
+                        risk_level: gasAnalysis.riskLevel,
+                        status: gasBasedStatus,
+                        probability: gasAnalysis.probability,
+                        confidence: gasAnalysis.confidence,
+                        threshold: gasAnalysis.threshold,
+                        recommendation: gasAnalysis.recommendation
+                    },
                     model: activeModel ? {
                         name: activeModel.model_name,
                         version: activeModel.model_version,
@@ -1007,20 +1112,88 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
             }
         }
 
-        console.log('🔍 ML Workflow Response to Frontend:');
+        console.log('📤 [SmartSense Scanner] ML Workflow Response to Frontend:');
         console.log('  Final Status:', finalStatus);
         console.log('  Final Probability:', finalProbability);
         console.log('  Final Confidence:', finalConfidence);
         console.log('  Gas Risk Level:', gasAnalysis.riskLevel);
+        console.log('  Status Source:', statusSource);
+        console.log('  AI Analysis Used:', !!aiApiAnalysis);
         
-        res.json({
+        // Build recommendations object - prioritize AI recommendations, fallback to gas emission
+        let mainRecommendation = '';
+        let recommendationsArray = [];
+        
+        if (aiApiAnalysis && aiApiAnalysis.recommendations) {
+            if (Array.isArray(aiApiAnalysis.recommendations)) {
+                recommendationsArray = aiApiAnalysis.recommendations;
+                mainRecommendation = aiApiAnalysis.recommendations[0] || '';
+            } else if (typeof aiApiAnalysis.recommendations === 'string') {
+                mainRecommendation = aiApiAnalysis.recommendations;
+                recommendationsArray = [mainRecommendation];
+            }
+        }
+        
+        // Fallback to gas emission recommendation if AI doesn't have recommendations
+        if (!mainRecommendation && gasAnalysis.recommendation) {
+            mainRecommendation = gasAnalysis.recommendation;
+            recommendationsArray = [mainRecommendation];
+        }
+        
+        // Fallback to SmartSense recommendation if still no recommendation
+        if (!mainRecommendation && smart && smart.recommendation) {
+            mainRecommendation = smart.recommendation;
+            recommendationsArray = [mainRecommendation];
+        }
+        
+        // Build recommendations object
+        const recommendationsObj = {
+            main: mainRecommendation || 'No recommendations available',
+            details: recommendationsArray.length > 1 ? recommendationsArray.slice(1) : []
+        };
+        
+        console.log('📊 Recommendations for response:', {
+            main: recommendationsObj.main,
+            details: recommendationsObj.details,
+            source: aiApiAnalysis ? 'ai' : (gasAnalysis.recommendation ? 'gas_emission' : 'smartsense')
+        });
+        
+        // Prepare response with AI insights if available
+        const response = {
             success: true,
             prediction_id: result.insertId,
             spoilage_status: finalStatus,
             spoilage_probability: finalProbability,
             confidence_score: finalConfidence,
-            message: 'ML prediction completed successfully'
-        });
+            message: 'ML prediction completed successfully',
+            status_source: statusSource,
+            recommendation: recommendationsObj.main,
+            recommendations: recommendationsObj,
+            ai_support: aiApiAnalysis ? {
+                used: true,
+                status: aiApiAnalysis.spoilage_status,
+                probability: aiApiAnalysis.spoilage_probability,
+                confidence: aiApiAnalysis.confidence_score,
+                summary: aiApiAnalysis.summary,
+                key_factors: aiApiAnalysis.key_factors,
+                recommendations: aiApiAnalysis.recommendations,
+                ai_insights: aiApiAnalysis.ai_insights,
+                estimated_shelf_life_hours: aiApiAnalysis.estimated_shelf_life_hours
+            } : {
+                used: false,
+                attempted: aiAnalysisAttempted,
+                error: aiAnalysisError ? aiAnalysisError.message : null
+            },
+            gas_emission_support: {
+                risk_level: gasAnalysis.riskLevel,
+                status: gasBasedStatus,
+                probability: gasAnalysis.probability,
+                confidence: gasAnalysis.confidence,
+                recommendation: gasAnalysis.recommendation
+            }
+        };
+        
+        res.json(response);
 
     } catch (error) {
         console.error('Error generating ML prediction:', error);

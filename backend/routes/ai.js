@@ -752,6 +752,207 @@ function inferCategoryFromName(foodName) {
     return 'Other';
 }
 
+// Validate if input is a real food name (AI-powered)
+router.post('/validate-food-name', Auth.authenticateToken, async (req, res) => {
+    try {
+        const { food_name } = req.body;
+
+        if (!food_name || food_name.trim() === '') {
+            return res.status(400).json({ 
+                success: false,
+                error: 'Food name is required',
+                is_food: false
+            });
+        }
+
+        const foodName = food_name.trim();
+
+        // Check if Gemini API key is configured - AI validation is REQUIRED
+        if (!geminiConfig.apiKey) {
+            console.error('❌ Gemini API key not configured - AI validation unavailable');
+            return res.status(503).json({ 
+                success: false,
+                is_food: false,
+                food_name: foodName,
+                error: 'AI validation service is not configured. Please contact administrator.',
+                _mode: 'ai_unavailable',
+                message: 'AI validation is required but not available'
+            });
+        }
+
+        // Use AI to validate if it's a real food name (PRIMARY METHOD)
+        // Simplified prompt to reduce token usage
+        console.log(`🤖 [AI Validation] Validating food name: "${foodName}"`);
+        const prompt = `Is "${foodName}" a real food name? Return ONLY JSON: {"is_food":true/false,"reason":"brief","confidence":0-100}
+
+Valid: Banana, Chicken, Salmon, Mango, Rice, Milk, Tomato
+Invalid: Table, 123, Car, Book, Computer, Test, Random`;
+
+        try {
+            // Increase maxOutputTokens to allow for thinking tokens + actual response
+            // Gemini 2.5 Flash uses thinking tokens, so we need more headroom
+            const response = await generateContent([{ text: prompt }], {
+                temperature: 0.1,
+                maxOutputTokens: 500 // Increased to allow for thinking tokens + JSON response
+            });
+
+            console.log('🤖 [AI Validation] Raw response structure:', JSON.stringify(response, null, 2));
+
+            // Check for finish reason - if MAX_TOKENS, the response might be incomplete
+            const finishReason = response?.candidates?.[0]?.finishReason;
+            if (finishReason === 'MAX_TOKENS') {
+                console.warn('⚠️ [AI Validation] Response hit MAX_TOKENS limit - response may be incomplete');
+            }
+
+            // Extract text from Gemini response structure (handle multiple possible formats)
+            let responseText = '';
+            
+            // Structure 1: candidates[0].content.parts[0].text (most common Gemini format)
+            if (response && response.candidates && response.candidates[0]) {
+                const candidate = response.candidates[0];
+                
+                // Check if content.parts exists
+                if (candidate.content && candidate.content.parts && Array.isArray(candidate.content.parts)) {
+                    // Try to find any part with text
+                    for (const part of candidate.content.parts) {
+                        if (part && part.text) {
+                            responseText = part.text.trim();
+                            break;
+                        }
+                    }
+                    
+                    // If parts array exists but is empty or has no text, log it
+                    if (!responseText && candidate.content.parts.length > 0) {
+                        console.warn('⚠️ [AI Validation] Parts array exists but contains no text:', candidate.content.parts);
+                    } else if (!responseText && candidate.content.parts.length === 0) {
+                        console.warn('⚠️ [AI Validation] Parts array is empty');
+                    }
+                } else if (candidate.content && !candidate.content.parts) {
+                    console.warn('⚠️ [AI Validation] Content exists but parts array is missing');
+                }
+                
+                // If still no text and finishReason is MAX_TOKENS, the response was truncated
+                if (!responseText && finishReason === 'MAX_TOKENS') {
+                    console.error('❌ [AI Validation] Response hit MAX_TOKENS - no text was generated');
+                    console.error('❌ [AI Validation] Token usage:', {
+                        promptTokens: response?.usageMetadata?.promptTokenCount,
+                        totalTokens: response?.usageMetadata?.totalTokenCount,
+                        thoughtsTokens: response?.usageMetadata?.thoughtsTokenCount
+                    });
+                    throw new Error('AI response hit token limit before generating output. The model used all tokens for thinking. Please increase maxOutputTokens or simplify the prompt.');
+                }
+            }
+            // Structure 3: text property directly
+            else if (response && response.text) {
+                responseText = typeof response.text === 'function' ? response.text() : response.text;
+                if (typeof responseText === 'string') {
+                    responseText = responseText.trim();
+                }
+            }
+            // Structure 4: candidates[0].text
+            else if (response && response.candidates && response.candidates[0] && response.candidates[0].text) {
+                responseText = response.candidates[0].text.trim();
+            }
+            // Structure 5: response.response.text() (async function)
+            else if (response && response.response) {
+                try {
+                    const textResult = typeof response.response.text === 'function' ? 
+                        await response.response.text() : response.response.text;
+                    responseText = (textResult || '').trim();
+                } catch (e) {
+                    console.warn('Failed to extract text from response.response:', e);
+                }
+            }
+            // Structure 6: direct string
+            else if (typeof response === 'string') {
+                responseText = response.trim();
+            }
+
+            console.log('🤖 [AI Validation] Extracted text:', responseText);
+            console.log('🤖 [AI Validation] Finish reason:', finishReason);
+
+            if (!responseText || responseText.length === 0) {
+                // If MAX_TOKENS was hit, provide a more helpful error
+                if (finishReason === 'MAX_TOKENS') {
+                    throw new Error('AI response hit token limit. The response was too long. Please try with a shorter food name or contact support.');
+                }
+                throw new Error('AI did not return any text in the response. Finish reason: ' + (finishReason || 'unknown'));
+            }
+
+            // Clean the response text
+            responseText = responseText.trim();
+            // Remove markdown code blocks if present
+            responseText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+            // Remove any leading/trailing whitespace or newlines
+            responseText = responseText.replace(/^\s+|\s+$/g, '');
+
+            console.log('🤖 [AI Validation] Cleaned text:', responseText);
+
+            let validationResult;
+            try {
+                // Try direct JSON parse first
+                validationResult = JSON.parse(responseText);
+            } catch (parseError) {
+                console.warn('⚠️ Direct JSON parse failed, trying to extract JSON:', parseError.message);
+                // If JSON parsing fails, try to extract JSON from the response
+                const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+                if (jsonMatch && jsonMatch[0]) {
+                    try {
+                        validationResult = JSON.parse(jsonMatch[0]);
+                        console.log('✅ Successfully extracted JSON from response');
+                    } catch (extractError) {
+                        console.error('❌ Failed to parse extracted JSON:', extractError.message);
+                        console.error('❌ Extracted JSON string:', jsonMatch[0]);
+                        throw new Error(`Could not parse AI response as JSON. Response: ${responseText.substring(0, 200)}`);
+                    }
+                } else {
+                    console.error('❌ No JSON object found in response');
+                    console.error('❌ Response text:', responseText);
+                    throw new Error(`Could not find JSON object in AI response. Response: ${responseText.substring(0, 200)}`);
+                }
+            }
+
+            const isFood = validationResult.is_food === true || validationResult.is_food === 'true';
+            const confidence = validationResult.confidence || (isFood ? 85 : 15);
+            const reason = validationResult.reason || 'AI validation completed';
+
+            console.log(`🔍 Food name validation: "${foodName}" -> is_food: ${isFood}, confidence: ${confidence}%`);
+
+            res.json({
+                success: true,
+                is_food: isFood,
+                food_name: foodName,
+                confidence: confidence,
+                reason: reason,
+                _mode: 'ai_validation'
+            });
+
+        } catch (aiError) {
+            console.error('❌ AI validation error:', aiError);
+            // AI validation failed - reject the input (AI is mandatory)
+            res.status(503).json({
+                success: false,
+                is_food: false,
+                food_name: foodName,
+                error: 'AI validation service encountered an error',
+                details: aiError.message,
+                reason: 'AI validation failed - service unavailable',
+                _mode: 'ai_error',
+                message: 'Unable to validate food name with AI. Please try again later.'
+            });
+        }
+
+    } catch (error) {
+        console.error('Error validating food name:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Failed to validate food name', 
+            details: error.message,
+            is_food: false
+        });
+    }
+});
+
 // Category endpoint using hard-coded inference (no AI)
 router.post('/generate-categories', Auth.authenticateToken, async (req, res) => {
     try {

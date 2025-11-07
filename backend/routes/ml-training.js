@@ -272,8 +272,30 @@ router.post('/add', Auth.authenticateToken, async (req, res) => {
         }
         const qualityToUse = (quality_score == null || Number.isNaN(Number(quality_score))) ? 1.0 : Math.max(0, Math.min(1, Number(quality_score)));
 
-        // Parse and validate environmental_factors
+        // Parse and validate environmental_factors (accept plain text or JSON)
         let parsedEnvFactors = {};
+        if (environmental_factors) {
+            if (typeof environmental_factors === 'string') {
+                const trimmed = environmental_factors.trim();
+                if (trimmed) {
+                    try {
+                        parsedEnvFactors = JSON.parse(trimmed);
+                    } catch (jsonError) {
+                        // Not valid JSON - store as plain text in notes field
+                        console.log('Plain text detected in environmental_factors, storing as notes:', trimmed.substring(0, 50));
+                        parsedEnvFactors = {
+                            notes: trimmed,
+                            storage_location: "box container"
+                        };
+                    }
+                }
+            } else if (typeof environmental_factors === 'object') {
+                parsedEnvFactors = environmental_factors;
+            }
+        }
+        
+        // Skip AI conversion - user wants plain text stored as-is
+        /*
         if (environmental_factors) {
             if (typeof environmental_factors === 'string') {
                 const trimmed = environmental_factors.trim();
@@ -426,7 +448,8 @@ Return ONLY a valid JSON object with these fields, nothing else. No markdown, no
                 parsedEnvFactors = environmental_factors;
             }
         }
-
+        */
+        
         // Ensure storage_location is always set to "box container" if not specified
         if (!parsedEnvFactors.storage_location) {
             parsedEnvFactors.storage_location = "box container";
@@ -843,8 +866,32 @@ router.put('/update/:id', Auth.authenticateToken, async (req, res) => {
         }
         const qualityToUse = (quality_score == null || Number.isNaN(Number(quality_score))) ? 1.0 : Math.max(0, Math.min(1, Number(quality_score)));
 
-        // Validate and sanitize environmental_factors (must be valid JSON or null)
+        // Validate and sanitize environmental_factors (accept plain text or JSON)
         let parsedEnvFactors = {};
+        if (environmental_factors) {
+            if (typeof environmental_factors === 'string') {
+                const trimmed = environmental_factors.trim();
+                if (trimmed) {
+                    try {
+                        // Try to parse to validate it's valid JSON
+                        parsedEnvFactors = JSON.parse(trimmed);
+                    } catch (jsonError) {
+                        // Not valid JSON - store as plain text in notes field
+                        console.log('Plain text detected in environmental_factors, storing as notes:', trimmed.substring(0, 50));
+                        parsedEnvFactors = {
+                            notes: trimmed,
+                            storage_location: "box container"
+                        };
+                    }
+                }
+            } else if (typeof environmental_factors === 'object') {
+                // If it's already an object, use it
+                parsedEnvFactors = environmental_factors;
+            }
+        }
+        
+        // Skip AI conversion - user wants plain text stored as-is
+        /*
         if (environmental_factors) {
             if (typeof environmental_factors === 'string') {
                 const trimmed = environmental_factors.trim();
@@ -1003,6 +1050,7 @@ Return ONLY a valid JSON object with these fields, nothing else. No markdown, no
                 parsedEnvFactors = environmental_factors;
             }
         }
+        */
 
         // Ensure storage_location is always set to "box container" if not specified
         if (!parsedEnvFactors.storage_location) {

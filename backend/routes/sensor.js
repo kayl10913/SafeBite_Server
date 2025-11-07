@@ -540,14 +540,32 @@ router.post('/data', async (req, res) => {
                 case 'Temperature':
                     value = temperature;
                     unit = '°C';
+                    // Only filter out known DHT sensor error values (-127.5°C, -127°C, etc.)
+                    // Allow a wide range of temperatures for flexibility
+                    if (value <= -100 || value > 200 || isNaN(value)) {
+                        console.warn(`⚠️ Invalid temperature reading detected: ${value}°C (sensor_id: ${sensorId}). This is likely a sensor error. Skipping insertion.`);
+                        continue; // Skip this reading
+                    }
                     break;
                 case 'Humidity':
                     value = humidity;
                     unit = '%';
+                    // Allow slight overflow/underflow for sensor calibration issues
+                    // Only reject extreme invalid values
+                    if (value < -10 || value > 110 || isNaN(value)) {
+                        console.warn(`⚠️ Invalid humidity reading detected: ${value}% (sensor_id: ${sensorId}). Skipping insertion.`);
+                        continue; // Skip this reading
+                    }
                     break;
                 case 'Gas':
                     value = gas;
                     unit = 'ppm';
+                    // Allow a wide range for gas readings
+                    // Only reject negative values or extremely high values
+                    if (value < 0 || value > 50000 || isNaN(value)) {
+                        console.warn(`⚠️ Invalid gas reading detected: ${value} ppm (sensor_id: ${sensorId}). Skipping insertion.`);
+                        continue; // Skip this reading
+                    }
                     break;
             }
 
@@ -825,14 +843,32 @@ router.get('/arduino-data', async (req, res) => {
                 case 'Temperature':
                     value = parseFloat(temperature);
                     unit = '°C';
+                    // Only filter out known DHT sensor error values (-127.5°C, -127°C, etc.)
+                    // Allow a wide range of temperatures for flexibility
+                    if (value <= -100 || value > 200 || isNaN(value)) {
+                        console.warn(`⚠️ Invalid temperature reading detected: ${value}°C (sensor_id: ${sensorId}). This is likely a sensor error. Skipping insertion.`);
+                        continue; // Skip this reading
+                    }
                     break;
                 case 'Humidity':
                     value = parseFloat(humidity);
                     unit = '%';
+                    // Allow slight overflow/underflow for sensor calibration issues
+                    // Only reject extreme invalid values
+                    if (value < -10 || value > 110 || isNaN(value)) {
+                        console.warn(`⚠️ Invalid humidity reading detected: ${value}% (sensor_id: ${sensorId}). Skipping insertion.`);
+                        continue; // Skip this reading
+                    }
                     break;
                 case 'Gas':
                     value = parseInt(gas);
                     unit = 'ppm';
+                    // Allow a wide range for gas readings
+                    // Only reject negative values or extremely high values
+                    if (value < 0 || value > 50000 || isNaN(value)) {
+                        console.warn(`⚠️ Invalid gas reading detected: ${value} ppm (sensor_id: ${sensorId}). Skipping insertion.`);
+                        continue; // Skip this reading
+                    }
                     break;
             }
 
