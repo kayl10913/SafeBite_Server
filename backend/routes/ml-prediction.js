@@ -609,6 +609,15 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
             console.warn(`[${callId}] Could not create ML alert:`, alertErr.message);
         }
 
+        // Calculate and update model accuracy if actual_outcome is provided
+        if (actual_outcome) {
+            try {
+                await calculateAndUpdateModelAccuracy(activeModel);
+            } catch (accuracyError) {
+                console.warn(`[${callId}] Could not update model accuracy:`, accuracyError.message);
+            }
+        }
+
         res.json({ 
             success: true,
             message: 'ML prediction completed successfully',
@@ -1066,5 +1075,146 @@ async function updateFoodExpiryFromMLPrediction(foodId, spoilageStatus, spoilage
         throw error;
     }
 }
+
+// Calculate and update model accuracy from predictions with actual_outcome
+async function calculateAndUpdateModelAccuracy(activeModel) {
+    try {
+        if (!activeModel || !activeModel.model_version) {
+            console.warn('No active model found, skipping accuracy calculation');
+            return;
+        }
+
+        const modelVersion = activeModel.model_version;
+        const modelName = activeModel.model_name || 'spoilage_classifier';
+
+        console.log(`📊 Calculating accuracy for model ${modelName} v${modelVersion}...`);
+
+        // Calculate accuracy from predictions with actual_outcome
+        const accuracyResult = await db.query(`
+            SELECT 
+                COUNT(*) AS total_predictions,
+                SUM(CASE WHEN spoilage_status = actual_outcome THEN 1 ELSE 0 END) AS correct_predictions,
+                CASE 
+                    WHEN COUNT(*) > 0 THEN
+                        ROUND(
+                            (SUM(CASE WHEN spoilage_status = actual_outcome THEN 1 ELSE 0 END) * 1.0 / COUNT(*)), 
+                            4
+                        )
+                    ELSE 0
+                END AS calculated_accuracy
+            FROM ml_predictions
+            WHERE model_version = ? 
+                AND actual_outcome IS NOT NULL
+                AND actual_outcome != ''
+        `, [modelVersion]);
+
+        if (!accuracyResult || accuracyResult.length === 0) {
+            console.warn('No accuracy data found for model version:', modelVersion);
+            return;
+        }
+
+        const accuracyData = accuracyResult[0];
+        const totalPredictions = accuracyData.total_predictions || 0;
+        const correctPredictions = accuracyData.correct_predictions || 0;
+        const calculatedAccuracy = parseFloat(accuracyData.calculated_accuracy || 0);
+
+        console.log(`📊 Accuracy calculation results:`, {
+            model_version: modelVersion,
+            total_predictions: totalPredictions,
+            correct_predictions: correctPredictions,
+            calculated_accuracy: calculatedAccuracy,
+            accuracy_percentage: (calculatedAccuracy * 100).toFixed(2) + '%'
+        });
+
+        // Only update if we have at least 5 predictions with actual_outcome
+        if (totalPredictions < 5) {
+            console.log(`📊 Not enough predictions (${totalPredictions}) to update accuracy. Need at least 5.`);
+            return;
+        }
+
+        // Update model accuracy in ml_models table
+        const updateResult = await db.query(`
+            UPDATE ml_models 
+            SET 
+                accuracy_score = ?,
+                last_trained = CURRENT_TIMESTAMP
+            WHERE model_name = ? 
+                AND model_version = ?
+                AND is_active = 1
+        `, [calculatedAccuracy, modelName, modelVersion]);
+
+        if (updateResult.affectedRows > 0) {
+            console.log(`✅ Model accuracy updated successfully: ${(calculatedAccuracy * 100).toFixed(2)}% (${correctPredictions}/${totalPredictions} correct)`);
+            
+            // Log activity
+            try {
+                await db.query(
+                    'INSERT INTO activity_logs (user_id, action) VALUES (?, ?)',
+                    [11, `Model accuracy updated: ${modelName} v${modelVersion} - ${(calculatedAccuracy * 100).toFixed(2)}% (${correctPredictions}/${totalPredictions} correct)`]
+                );
+            } catch (logError) {
+                console.warn('Failed to log accuracy update activity:', logError.message);
+            }
+        } else {
+            console.warn(`⚠️ No model found to update: ${modelName} v${modelVersion}`);
+        }
+
+    } catch (error) {
+        console.error('Error calculating and updating model accuracy:', error);
+        throw error;
+    }
+}
+
+// POST /api/ml/recalculate-accuracy - Manually recalculate model accuracy
+router.post('/recalculate-accuracy', Auth.authenticateToken, async (req, res) => {
+    try {
+        // Get active model
+        const [modelRow] = await db.query(
+            `SELECT model_name, model_version, model_type, model_path
+             FROM ml_models
+             WHERE is_active = 1
+             ORDER BY COALESCE(last_trained, created_at) DESC
+             LIMIT 1`
+        );
+
+        if (!modelRow || !modelRow.model_version) {
+            return res.status(404).json({
+                success: false,
+                error: 'No active model found'
+            });
+        }
+
+        await calculateAndUpdateModelAccuracy(modelRow);
+
+        // Get updated accuracy
+        const [updatedModel] = await db.query(
+            `SELECT accuracy_score, training_data_count, last_trained
+             FROM ml_models
+             WHERE model_name = ? AND model_version = ? AND is_active = 1`,
+            [modelRow.model_name, modelRow.model_version]
+        );
+
+        res.json({
+            success: true,
+            message: 'Model accuracy recalculated successfully',
+            data: {
+                model_name: modelRow.model_name,
+                model_version: modelRow.model_version,
+                accuracy_score: updatedModel && updatedModel[0] ? updatedModel[0].accuracy_score : null,
+                accuracy_percentage: updatedModel && updatedModel[0] && updatedModel[0].accuracy_score 
+                    ? (parseFloat(updatedModel[0].accuracy_score) * 100).toFixed(2) + '%' 
+                    : '0.00%',
+                last_trained: updatedModel && updatedModel[0] ? updatedModel[0].last_trained : null
+            }
+        });
+
+    } catch (error) {
+        console.error('Error recalculating model accuracy:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to recalculate model accuracy: ' + error.message
+        });
+    }
+});
 
 module.exports = router;
