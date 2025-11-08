@@ -772,13 +772,42 @@ router.get('/gauges', async (req, res) => {
     }
 });
 
+// Helper function to extract sensor data from request (supports both GET and POST)
+function extractSensorData(req) {
+    // Try query parameters first (for GET requests)
+    let temperature = req.query.temp || req.query.temperature;
+    let humidity = req.query.hum || req.query.humidity;
+    let gas = req.query.gas || req.query.gas_level;
+    
+    // If not found in query, try body (for POST requests)
+    if (temperature === undefined && req.body) {
+        temperature = req.body.temp || req.body.temperature;
+    }
+    if (humidity === undefined && req.body) {
+        humidity = req.body.hum || req.body.humidity;
+    }
+    if (gas === undefined && req.body) {
+        gas = req.body.gas || req.body.gas_level;
+    }
+    
+    return { temperature, humidity, gas };
+}
+
 // GET /api/sensor/arduino-data - Public endpoint for Arduino to send data (GET method)
 router.get('/arduino-data', async (req, res) => {
     try {
-        const { temp: temperature, hum: humidity, gas } = req.query;
+        const { temperature, humidity, gas } = extractSensorData(req);
+        
+        // Log received data for debugging
+        console.log('📡 GET /arduino-data - Received:', {
+            query: req.query,
+            body: req.body,
+            extracted: { temperature, humidity, gas }
+        });
         
         // Validate data
         if (temperature === undefined && humidity === undefined && gas === undefined) {
+            console.log('❌ No sensor data provided in request');
             return res.status(400).json({ error: 'No sensor data provided' });
         }
 
@@ -899,13 +928,131 @@ router.get('/arduino-data', async (req, res) => {
         console.error('Error storing Arduino sensor data:', error);
         res.status(500).json({ error: 'Failed to store sensor data: ' + error.message });
     }
-
-    
 });
-// GET /api/sensor/arduino-test - Simple test endpoint for Arduino
+
+// POST /api/sensor/arduino-data - Public endpoint for Arduino/ThingSpeak to send data (POST method)
+router.post('/arduino-data', async (req, res) => {
+    try {
+        const { temperature, humidity, gas } = extractSensorData(req);
+        
+        // Log received data for debugging
+        console.log('📡 POST /arduino-data - Received:', {
+            query: req.query,
+            body: req.body,
+            extracted: { temperature, humidity, gas }
+        });
+        
+        // Validate data
+        if (temperature === undefined && humidity === undefined && gas === undefined) {
+            console.log('❌ No sensor data provided in request');
+            return res.status(400).json({ error: 'No sensor data provided' });
+        }
+
+        // For Arduino compatibility, we'll use user ID 11
+        // In production, you might want to use device-specific authentication
+        let currentUserId = 11; // User ID 11 for Arduino data
+
+        // Check if there's an active scan session for this user
+        const activeSessionQuery = `
+            SELECT session_id, status, started_at 
+            FROM food_scan_sessions 
+            WHERE user_id = ? AND status = 'active' 
+            ORDER BY started_at DESC 
+            LIMIT 1
+        `;
+        
+        const activeSessions = await db.query(activeSessionQuery, [currentUserId]);
+        
+        if (activeSessions.length === 0) {
+            console.log('🚫 Arduino data blocked - No active scan session for user', currentUserId);
+            return res.status(403).json({ 
+                success: false,
+                error: 'No active scan session. Please start a scan session first.',
+                blocked: true,
+                message: 'Arduino data reception is blocked until scan session is started'
+            });
+        }
+
+        const activeSession = activeSessions[0];
+        console.log('✅ Arduino data allowed - Active scan session found:', activeSession.session_id);
+
+        // Check if Arduino sensors exist, if not create them
+        const sensorTypes = [];
+        if (temperature !== undefined) sensorTypes.push('Temperature');
+        if (humidity !== undefined) sensorTypes.push('Humidity');
+        if (gas !== undefined) sensorTypes.push('Gas');
+
+        for (const type of sensorTypes) {
+            // First check if user already has this sensor type
+            const existingSensors = await db.query(
+                'SELECT sensor_id FROM sensor WHERE type = ? AND user_id = ? LIMIT 1',
+                [type, currentUserId]
+            );
+
+            let sensorId;
+            if (existingSensors.length === 0) {
+                // Create new Arduino sensor for default user
+                const result = await db.query(
+                    'INSERT INTO sensor (type, user_id, is_active) VALUES (?, ?, 1)',
+                    [type, currentUserId]
+                );
+                sensorId = result.insertId;
+            } else {
+                sensorId = existingSensors[0].sensor_id;
+            }
+
+            // Insert reading based on sensor type
+            let value = null;
+            let unit = '';
+
+            switch (type) {
+                case 'Temperature':
+                    value = parseFloat(temperature);
+                    unit = '°C';
+                    break;
+                case 'Humidity':
+                    value = parseFloat(humidity);
+                    unit = '%';
+                    break;
+                case 'Gas':
+                    value = parseInt(gas);
+                    unit = 'ppm';
+                    break;
+            }
+
+            if (value !== null && !isNaN(value)) {
+                await db.query(
+                    'INSERT INTO readings (sensor_id, value, unit) VALUES (?, ?, ?)',
+                    [sensorId, value, unit]
+                );
+            }
+        }
+
+        // Return success response
+        res.json({
+            success: true,
+            message: 'Sensor data received and stored',
+            data: {
+                temperature: temperature ? parseFloat(temperature).toFixed(2) : null,
+                humidity: humidity ? parseFloat(humidity).toFixed(2) : null,
+                gas_level: gas ? parseInt(gas) : null,
+                timestamp: new Date().toISOString(),
+                user_id: currentUserId,
+                session_id: activeSession.session_id,
+                session_started: activeSession.started_at
+            }
+        });
+
+    } catch (error) {
+        console.error('Error storing Arduino sensor data:', error);
+        res.status(500).json({ error: 'Failed to store sensor data: ' + error.message });
+    }
+});
+
+// GET /api/sensor/arduino-test - Simple test endpoint for Arduino/ThingSpeak
 router.get('/arduino-test', (req, res) => {
     const { temp, hum, gas } = req.query;
-    console.log("✅ Received from Arduino:", req.query);
+    console.log("✅ Received from Arduino/ThingSpeak:", req.query);
   
     res.json({
       success: true,
@@ -913,6 +1060,37 @@ router.get('/arduino-test', (req, res) => {
         temperature: temp || null,
         humidity: hum || null,
         gas: gas || null,
+      },
+      timestamp: new Date().toISOString(),
+    });
+});
+
+// POST /api/sensor/arduino-test - Test endpoint for POST requests from ThingSpeak
+router.post('/arduino-test', (req, res) => {
+    const { temp, hum, gas, temperature, humidity, gas_level } = req.body || {};
+    const queryParams = req.query || {};
+    
+    // Try to get from body first, then query
+    const temperatureValue = temp || temperature || queryParams.temp || queryParams.temperature;
+    const humidityValue = hum || humidity || queryParams.hum || queryParams.humidity;
+    const gasValue = gas || gas_level || queryParams.gas || queryParams.gas_level;
+    
+    console.log("✅ POST received from ThingSpeak:", {
+        body: req.body,
+        query: req.query,
+        extracted: {
+            temperature: temperatureValue,
+            humidity: humidityValue,
+            gas: gasValue
+        }
+    });
+  
+    res.json({
+      success: true,
+      received: {
+        temperature: temperatureValue || null,
+        humidity: humidityValue || null,
+        gas: gasValue || null,
       },
       timestamp: new Date().toISOString(),
     });

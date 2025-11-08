@@ -364,7 +364,10 @@ class EmailService {
                             ${foodName ? `<p style=\\\"color:#0f172a; font-weight:600; margin: 0 0 12px;\\\">Food Item: ${foodName}</p>` : ''}
                             ${probability !== undefined ? `<p style=\\\"color:#334155; margin: 0 0 12px;\\\">Estimated Probability: <strong>${probability}%</strong></p>` : ''}
                             ${readingsHtml}
-                            ${recommendation ? `<div style=\\\"margin-top: 12px; padding: 14px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;\\\">\n                                <div style=\\\"color:#0f172a; font-weight:700; margin-bottom:6px;\\\">Recommended Action</div>\n                                <div style=\\\"color:#334155;\\\">${recommendation}</div>\n                            </div>` : ''}
+                            ${recommendation ? `<div style=\\\"margin-top: 12px; padding: 14px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;\\\">\n
+                                <div style=\\\"color:#0f172a; font-weight:700; margin-bottom:6px;\\\">Recommended Action</div>\n                                
+                                <div style=\\\"color:#334155;\\\">${recommendation}</div>\n                            
+                                </div>` : ''}
                             <div style=\"margin-top: 18px;\">
                                 <a href=\"${dashboardUrl}\" style=\"display:inline-block; background:${severityColor}; color:#0f172a; text-decoration:none; font-weight:700; padding: 10px 16px; border-radius: 10px; border: 1px solid rgba(15,23,42,.12);\">Open Dashboard</a>
                             </div>
