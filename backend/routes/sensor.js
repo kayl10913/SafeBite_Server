@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/database');
 const auth = require('../config/auth');
+const url = require('url');
+const querystring = require('querystring');
 
 /**
  * Sensor Data API - Express.js version
@@ -774,10 +776,50 @@ router.get('/gauges', async (req, res) => {
 
 // Helper function to extract sensor data from request (supports both GET and POST)
 function extractSensorData(req) {
-    // Try query parameters first (for GET requests)
+    // Log all possible sources for debugging
+    const rawUrl = req.originalUrl || req.url || '';
+    const parsedUrl = url.parse(rawUrl, true);
+    const manualQuery = parsedUrl.query || {};
+    
+    console.log('🔍 Extracting sensor data from:', {
+        query: req.query,
+        body: req.body,
+        params: req.params,
+        rawUrl: rawUrl,
+        parsedUrlQuery: parsedUrl.query,
+        manualQuery: manualQuery,
+        headers: {
+            'content-type': req.headers['content-type'],
+            'user-agent': req.headers['user-agent']
+        }
+    });
+    
+    // Try Express parsed query parameters first (for GET requests)
     let temperature = req.query.temp || req.query.temperature;
     let humidity = req.query.hum || req.query.humidity;
     let gas = req.query.gas || req.query.gas_level;
+    
+    // If Express didn't parse it, try manual parsing from URL
+    if (temperature === undefined && humidity === undefined && gas === undefined) {
+        temperature = manualQuery.temp || manualQuery.temperature;
+        humidity = manualQuery.hum || manualQuery.humidity;
+        gas = manualQuery.gas || manualQuery.gas_level;
+    }
+    
+    // If still not found, try parsing query string manually from raw URL
+    if (temperature === undefined && humidity === undefined && gas === undefined) {
+        const queryString = rawUrl.split('?')[1];
+        if (queryString) {
+            try {
+                const parsed = querystring.parse(queryString);
+                temperature = parsed.temp || parsed.temperature;
+                humidity = parsed.hum || parsed.humidity;
+                gas = parsed.gas || parsed.gas_level;
+            } catch (e) {
+                console.log('⚠️ Error parsing query string:', e.message);
+            }
+        }
+    }
     
     // If not found in query, try body (for POST requests)
     if (temperature === undefined && req.body) {
@@ -789,6 +831,19 @@ function extractSensorData(req) {
     if (gas === undefined && req.body) {
         gas = req.body.gas || req.body.gas_level;
     }
+    
+    // Last resort: Try regex parsing from raw URL if parameters are in the URL string
+    if (temperature === undefined && humidity === undefined && gas === undefined) {
+        const urlMatch = rawUrl.match(/[?&](temp|temperature)=([^&]+)/i);
+        const humMatch = rawUrl.match(/[?&](hum|humidity)=([^&]+)/i);
+        const gasMatch = rawUrl.match(/[?&](gas|gas_level)=([^&]+)/i);
+        
+        if (urlMatch) temperature = decodeURIComponent(urlMatch[2]);
+        if (humMatch) humidity = decodeURIComponent(humMatch[2]);
+        if (gasMatch) gas = decodeURIComponent(gasMatch[2]);
+    }
+    
+    console.log('✅ Extracted values:', { temperature, humidity, gas });
     
     return { temperature, humidity, gas };
 }
