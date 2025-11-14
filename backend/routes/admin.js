@@ -665,19 +665,22 @@ router.get('/logs', Auth.authenticateToken, Auth.requireAdmin, async (req, res) 
             const at = String(action_type).toUpperCase();
             console.log('🔍 Applied action_type filter:', at);
             if (at === 'LOGIN') {
-                whereClause += " AND (al.action LIKE '%logged in%')";
+                whereClause += " AND (LOWER(al.action) LIKE '%logged in%' OR LOWER(al.action) LIKE '%login%')";
             } else if (at === 'LOGOUT') {
-                whereClause += " AND (al.action LIKE '%logged out%')";
+                whereClause += " AND (LOWER(al.action) LIKE '%logged out%' OR LOWER(al.action) LIKE '%logout%')";
             } else if (at === 'ADD' || at === 'ADDED') {
-                whereClause += " AND (al.action LIKE 'Added:%')";
+                // Match "Added:", "Added ML", "add", "created" (case-insensitive)
+                whereClause += " AND (LOWER(al.action) LIKE '%added%' OR LOWER(al.action) LIKE '%add %' OR LOWER(al.action) LIKE '%created%')";
             } else if (at === 'UPDATE' || at === 'UPDATED') {
-                whereClause += " AND (al.action LIKE 'Updated:%')";
+                // Match "Updated:", "update", "edit", "edited" (case-insensitive)
+                whereClause += " AND (LOWER(al.action) LIKE '%updated%' OR LOWER(al.action) LIKE '%update %' OR LOWER(al.action) LIKE '%edit%')";
             } else if (at === 'DELETE' || at === 'DELETED') {
-                whereClause += " AND (al.action LIKE 'Deleted:%')";
+                // Match "Deleted:", "delete", "deleted" (case-insensitive)
+                whereClause += " AND (LOWER(al.action) LIKE '%deleted%' OR LOWER(al.action) LIKE '%delete %')";
             } else {
-                // fallback: substring match
-                whereClause += " AND (al.action LIKE ?)";
-                params.push(`%${action_type}%`);
+                // fallback: substring match (case-insensitive)
+                whereClause += " AND (LOWER(al.action) LIKE ?)";
+                params.push(`%${action_type.toLowerCase()}%`);
             }
         }
 

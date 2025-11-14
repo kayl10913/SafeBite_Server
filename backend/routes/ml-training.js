@@ -99,39 +99,145 @@ Return ONLY a valid JSON object with these fields, nothing else. No markdown, no
         // Extract text from Gemini response structure
         let responseText = '';
         
+        // Check for errors in response
+        if (aiResponse && aiResponse.error) {
+            console.error('❌ AI API Error:', aiResponse.error);
+            throw new Error(`AI API Error: ${aiResponse.error.message || JSON.stringify(aiResponse.error)}`);
+        }
+
         // Try multiple possible response structures
         if (aiResponse) {
-            // Structure 1: candidates[0].content.parts[0].text
-            if (aiResponse.candidates && aiResponse.candidates[0] && 
-                aiResponse.candidates[0].content && aiResponse.candidates[0].content.parts && 
-                aiResponse.candidates[0].content.parts[0] && aiResponse.candidates[0].content.parts[0].text) {
-                responseText = aiResponse.candidates[0].content.parts[0].text.trim();
+            // Structure 1: candidates[0].content.parts[0].text (most common Gemini format)
+            if (aiResponse.candidates && Array.isArray(aiResponse.candidates) && aiResponse.candidates.length > 0) {
+                const candidate = aiResponse.candidates[0];
+                
+                // Check for finish reason that might indicate issues
+                if (candidate.finishReason) {
+                    if (candidate.finishReason === 'MAX_TOKENS') {
+                        console.warn('⚠️ AI response hit MAX_TOKENS limit - response may be incomplete');
+                    } else if (candidate.finishReason === 'SAFETY') {
+                        console.warn('⚠️ AI response blocked by safety filters');
+                        throw new Error('AI response was blocked by safety filters. Please try with different input.');
+                    } else if (candidate.finishReason === 'RECITATION') {
+                        console.warn('⚠️ AI response blocked due to recitation concerns');
+                        throw new Error('AI response was blocked due to recitation concerns.');
+                    } else if (candidate.finishReason === 'OTHER') {
+                        console.warn('⚠️ AI response finished with OTHER reason');
+                    }
+                }
+                
+                // Try to extract text from candidate
+                if (candidate.content && candidate.content.parts && Array.isArray(candidate.content.parts)) {
+                    for (const part of candidate.content.parts) {
+                        if (part.text) {
+                            responseText = part.text.trim();
+                            break;
+                        }
+                    }
+                }
+                
+                // Fallback: direct text property on candidate
+                if (!responseText && candidate.text) {
+                    responseText = candidate.text.trim();
+                }
             }
-            // Structure 2: text property directly
-            else if (aiResponse.text) {
+            
+            // Structure 2: text property directly on response
+            if (!responseText && aiResponse.text) {
                 responseText = aiResponse.text.trim();
             }
-            // Structure 3: candidates[0].text
-            else if (aiResponse.candidates && aiResponse.candidates[0] && aiResponse.candidates[0].text) {
-                responseText = aiResponse.candidates[0].text.trim();
+            
+            // Structure 3: response property (some API wrappers)
+            if (!responseText && aiResponse.response && aiResponse.response.text) {
+                responseText = aiResponse.response.text.trim();
+            }
+            
+            // Structure 4: direct string response
+            if (!responseText && typeof aiResponse === 'string') {
+                responseText = aiResponse.trim();
             }
         }
 
-        console.log('📝 Extracted text:', responseText);
+        console.log('📝 Extracted text:', responseText ? responseText.substring(0, 200) + '...' : 'EMPTY');
 
-        if (!responseText) {
-            console.error('❌ Could not extract text from AI response');
-            throw new Error('AI did not return a valid response');
+        // If no text extracted, provide fallback JSON instead of throwing error
+        if (!responseText || responseText.length === 0) {
+            console.warn('⚠️ Could not extract text from AI response, using fallback JSON');
+            
+            // Create fallback JSON based on input text and current data
+            const fallbackJson = {
+                observations: text || 'No observations provided',
+                notes: text || 'No notes provided',
+                storage_location: "box container"
+            };
+            
+            // Add sensor data if available
+            if (currentData) {
+                fallbackJson.storage_conditions = {
+                    temperature: currentData.temperature ? Number(currentData.temperature) : undefined,
+                    humidity: currentData.humidity ? Number(currentData.humidity) : undefined,
+                    gas_level: currentData.gas_level ? Number(currentData.gas_level) : undefined,
+                    timestamp: new Date().toISOString()
+                };
+                
+                // Add gas emission analysis if gas level is available
+                if (currentData.gas_level !== undefined) {
+                    const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+                    const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(Number(currentData.gas_level));
+                    fallbackJson.gas_emission_analysis = {
+                        risk_level: gasAnalysis.riskLevel,
+                        status: gasAnalysis.status,
+                        probability: gasAnalysis.probability,
+                        recommendation: gasAnalysis.recommendation
+                    };
+                }
+            }
+            
+            // Use fallback JSON as response
+            responseText = JSON.stringify(fallbackJson, null, 2);
+            console.log('✅ Using fallback JSON:', responseText);
         }
 
         // Extract JSON from AI response
         let jsonText = responseText;
         
         // Remove markdown code blocks if present
-        jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+        jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
         
         // Try to parse to validate
-        let parsedJson = JSON.parse(jsonText);
+        let parsedJson;
+        try {
+            parsedJson = JSON.parse(jsonText);
+        } catch (parseError) {
+            console.error('❌ Failed to parse AI response as JSON:', parseError.message);
+            console.error('📄 Response text that failed to parse:', jsonText.substring(0, 500));
+            
+            // Try to extract JSON from the response if it's embedded in text
+            const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    parsedJson = JSON.parse(jsonMatch[0]);
+                    console.log('✅ Successfully extracted JSON from embedded text');
+                } catch (e) {
+                    console.error('❌ Failed to parse extracted JSON:', e.message);
+                    // Use fallback JSON
+                    parsedJson = {
+                        observations: text || 'No observations provided',
+                        notes: text || 'No notes provided',
+                        storage_location: "box container",
+                        error: 'AI response could not be parsed as valid JSON'
+                    };
+                }
+            } else {
+                // No JSON found, use fallback
+                parsedJson = {
+                    observations: text || 'No observations provided',
+                    notes: text || 'No notes provided',
+                    storage_location: "box container",
+                    error: 'AI response was not in valid JSON format'
+                };
+            }
+        }
         
         // Ensure storage_location is set
         if (!parsedJson.storage_location) {
@@ -537,11 +643,15 @@ Return ONLY a valid JSON object with these fields, nothing else. No markdown, no
 
         const result = await db.query(sql, params);
 
-        // Activity log in the same style as activity_logs samples
+        // Activity log - Add Training Data
         try {
             const actorId = req.user && req.user.user_id ? req.user.user_id : null;
-            const actionText = `Added Training Data (${String(food_name).trim()})`;
+            const foodNameDisplay = String(food_name).trim();
+            const categoryDisplay = food_category ? ` (${String(food_category).trim()})` : '';
+            const statusDisplay = correctSpoilageStatus.toUpperCase();
+            const actionText = `Added ML Training Data: ${foodNameDisplay}${categoryDisplay} - Status: ${statusDisplay} - Temp: ${temperature}°C, Humidity: ${humidity}%, Gas: ${gas_level}ppm`;
             await Auth.logActivity(actorId, actionText, db);
+            console.log('✅ Activity log created for add training data:', actionText);
         } catch (logErr) {
             console.warn('ML add training activity log failed (continuing):', logErr.message);
         }
@@ -1173,11 +1283,16 @@ Return ONLY a valid JSON object with these fields, nothing else. No markdown, no
             });
         }
 
-        // Activity log
+        // Activity log - Update Training Data
         try {
             const actorId = req.user && req.user.user_id ? req.user.user_id : null;
-            const actionText = `Updated Training Data (ID: ${id})`;
+            const foodNameDisplay = (food_name ? String(food_name).trim() : existingData.food_name) || 'Unknown';
+            const finalCategory = food_category ? String(food_category).trim() : (existingData.food_category || '');
+            const categoryDisplay = finalCategory ? ` (${finalCategory})` : '';
+            const statusDisplay = statusToUse.toUpperCase();
+            const actionText = `Updated ML Training Data (ID: ${id}): ${foodNameDisplay}${categoryDisplay} - Status: ${statusDisplay} - Temp: ${temperature}°C, Humidity: ${humidity}%, Gas: ${gas_level}ppm`;
             await Auth.logActivity(actorId, actionText, db);
+            console.log('✅ Activity log created for update training data:', actionText);
         } catch (logErr) {
             console.warn('ML update training activity log failed (continuing):', logErr.message);
         }
