@@ -861,7 +861,7 @@ function generateRecommendations(spoilageStatus, temperature, humidity, gas_leve
     } else if (gasAnalysis.riskLevel === 'medium') {
         recommendations.main = 'Food shows signs of deterioration. Consume soon.';
         recommendations.details = [
-            'Use within 24 hours',
+            'Use within 3 hours',
             'Check for visible signs of spoilage',
             'Consider cooking thoroughly before consumption',
             'Monitor temperature and humidity'
@@ -899,7 +899,7 @@ function generateRecommendations(spoilageStatus, temperature, humidity, gas_leve
             case 'caution':
                 recommendations.main = 'Food shows signs of deterioration. Consume soon.';
                 recommendations.details = [
-                    'Use within 24 hours',
+                    'Use within 3 hours',
                     'Check for visible signs of spoilage',
                     'Consider cooking thoroughly before consumption',
                     'Monitor temperature and humidity'

@@ -364,10 +364,10 @@ async function analyzeFoodSafety(foodName, temperature, humidity, gasLevel, stor
             safetyScore -= 20;
             if (result === 'SAFE') result = 'CAUTION';
             recommendations.push('Food has been stored for over 48 hours. Check for signs of spoilage.');
-        } else if (hours > 24) {
+        } else if (hours > 3) {
             safetyScore -= 10;
             if (result === 'SAFE') result = 'CAUTION';
-            recommendations.push('Food has been stored for over 24 hours. Monitor closely.');
+            recommendations.push('Food has been stored for over 3 hours. Monitor closely.');
         }
     }
 

@@ -42,7 +42,7 @@ router.get('/dashboard/recent-food', async (req, res) => {
             const expDate = new Date(food.expiration_date);
             let status = 'Good';
             if (expDate < today) status = 'Spoilt';
-            else if ((expDate - today) / (1000*60*60*24) <= 3) status = 'Spoilt warning';
+            else if ((expDate - today) / (1000*60*60*24) <= 1) status = 'Spoilt warning';
             return {
                 food: food.name,
                 date: expDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
