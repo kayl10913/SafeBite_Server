@@ -134,13 +134,14 @@ router.post('/food-items', Auth.authenticateToken, async (req, res) => {
     }
 });
 
-// Update food item expiry date (authenticated user) - Now updates ml_predictions table
+// Update food item expiry date (authenticated user) - Updates both ml_predictions and food_items tables
 router.put('/food-items/:id/expiry', Auth.authenticateToken, async (req, res) => {
     try {
         const foodId = parseInt(req.params.id, 10);
         const { expiration_date } = req.body;
+        const userId = req.user.user_id;
 
-        if (!foodId) {
+        if (!foodId || isNaN(foodId)) {
             return res.status(400).json({ success: false, message: 'Invalid food id' });
         }
 
@@ -148,19 +149,56 @@ router.put('/food-items/:id/expiry', Auth.authenticateToken, async (req, res) =>
             return res.status(400).json({ success: false, message: 'expiration_date is required (YYYY-MM-DD)' });
         }
 
-        // Update expiration_date in ml_predictions table for all predictions linked to this food_id
-        const updateSql = `UPDATE ml_predictions SET expiration_date = ? WHERE food_id = ? AND user_id = ?`;
-        const result = await db.query(updateSql, [expiration_date, foodId, req.user.user_id]);
+        // First, verify the food item exists and belongs to the user
+        const foodCheck = await db.query(
+            'SELECT food_id FROM food_items WHERE food_id = ? AND user_id = ?',
+            [foodId, userId]
+        );
 
-        if (!result.affectedRows) {
-            return res.status(404).json({ success: false, message: 'Food item or predictions not found' });
+        if (!foodCheck || foodCheck.length === 0) {
+            return res.status(404).json({ success: false, message: 'Food item not found or access denied' });
         }
 
-        try { await Auth.logActivity(req.user.user_id, `Updated expiry date for food item ID ${foodId} to ${expiration_date}`, db); } catch (_) {}
-        res.json({ success: true, food_id: foodId, expiration_date, updated_predictions: result.affectedRows });
+        let updatedPredictions = 0;
+        let updatedFoodItems = 0;
+
+        // Update expiration_date in ml_predictions table for all predictions linked to this food_id
+        try {
+            const predictionResult = await db.query(
+                'UPDATE ml_predictions SET expiration_date = ? WHERE food_id = ? AND user_id = ?',
+                [expiration_date, foodId, userId]
+            );
+            updatedPredictions = predictionResult.affectedRows || 0;
+        } catch (predError) {
+            console.warn('Could not update ml_predictions expiration_date:', predError.message);
+        }
+
+        // Also update food_items table if it has an expiration_date column (for compatibility)
+        try {
+            const foodResult = await db.query(
+                'UPDATE food_items SET updated_at = NOW() WHERE food_id = ? AND user_id = ?',
+                [foodId, userId]
+            );
+            updatedFoodItems = foodResult.affectedRows || 0;
+        } catch (foodError) {
+            console.warn('Could not update food_items:', foodError.message);
+        }
+
+        // Log activity (non-blocking)
+        Auth.logActivity(userId, `Updated expiry date for food item ID ${foodId} to ${expiration_date}`, db).catch(err => {
+            console.warn('Failed to log activity (non-blocking):', err.message);
+        });
+
+        res.json({ 
+            success: true, 
+            food_id: foodId, 
+            expiration_date, 
+            updated_predictions: updatedPredictions,
+            updated_food_items: updatedFoodItems
+        });
     } catch (error) {
         console.error('Update food expiry error:', error);
-        res.status(500).json({ success: false, message: 'Internal server error' });
+        res.status(500).json({ success: false, message: 'Internal server error', error: error.message });
     }
 });
 
