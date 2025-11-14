@@ -590,16 +590,7 @@ router.post('/training-data', Auth.authenticateToken, async (req, res) => {
 });
 
 // POST /api/ml-workflow/predict - Generate ML prediction
-function requireRole(allowed) {
-	return (req, res, next) => {
-		const role = req.user && (req.user.role || req.user.user_role || req.user.type);
-		if (!role || !allowed.includes(String(role).toLowerCase())) {
-			return res.status(403).json({ success: false, error: 'Forbidden: ML role required' });
-		}
-		next();
-	};
-}
-//---ML predict---
+// Note: This endpoint uses Auth.authenticateToken only - no role-based restrictions
 router.post('/predict', Auth.authenticateToken, async (req, res) => {
     try {
         const user_id = req.user.user_id;
