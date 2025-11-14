@@ -1155,7 +1155,8 @@ router.post('/arduino-test', (req, res) => {
 router.post('/scan-session', async (req, res) => {
     try {
         const { user_id, session_data } = req.body;
-        const userId = user_id || 11; // Default to user 11 for Arduino
+        // Use authenticated user ID if available, otherwise use body parameter, fallback to 11 for Arduino
+        const userId = (req.user && req.user.user_id) || user_id || 11;
         
         // First, close any existing active sessions for this user
         await db.query(
@@ -1200,7 +1201,8 @@ router.post('/scan-session', async (req, res) => {
 router.put('/scan-session', async (req, res) => {
     try {
         const { user_id, session_id } = req.body;
-        const userId = user_id || 11;
+        // Use authenticated user ID if available, otherwise use body parameter, fallback to 11 for Arduino
+        const userId = (req.user && req.user.user_id) || user_id || 11;
         
         if (!session_id) {
             return res.status(400).json({ success: false, error: 'session_id is required' });
@@ -1243,7 +1245,8 @@ router.put('/scan-session', async (req, res) => {
 router.delete('/scan-session', async (req, res) => {
     try {
         const { user_id, session_id } = req.body || {};
-        const userId = user_id || 11;
+        // Use authenticated user ID if available, otherwise use body parameter, fallback to 11 for Arduino
+        const userId = (req.user && req.user.user_id) || user_id || 11;
 
         let where = 'user_id = ? AND status = "active"';
         const params = [userId];
@@ -1270,7 +1273,8 @@ router.delete('/scan-session', async (req, res) => {
 // GET /api/sensor/scan-session-status - Check if scan session is active
 router.get('/scan-session-status', async (req, res) => {
     try {
-        const userId = req.query.user_id ? parseInt(req.query.user_id) : 11; // Default to user 11 for Arduino
+        // Use authenticated user ID if available, otherwise use query parameter, fallback to 11 for Arduino
+        const userId = (req.user && req.user.user_id) || (req.query.user_id ? parseInt(req.query.user_id) : null) || 11;
         
         const activeSessionQuery = `
             SELECT session_id, status, started_at, food_items_count, ml_predictions_count
@@ -1332,7 +1336,8 @@ router.get('/scan-session-status', async (req, res) => {
 // GET /api/sensor/create-test-session - Create a test scan session for debugging
 router.get('/create-test-session', async (req, res) => {
     try {
-        const userId = 11; // Arduino user ID
+        // Use authenticated user ID if available, fallback to 11 for Arduino
+        const userId = (req.user && req.user.user_id) || 11;
         
         // First, close any existing active sessions for this user
         await db.query(
