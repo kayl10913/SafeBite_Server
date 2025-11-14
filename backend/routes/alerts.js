@@ -4,6 +4,28 @@ const Auth = require('../config/auth');
 const db = require('../config/database');
 const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
 const EmailService = require('../config/email');
+const auth = require('../config/auth');
+
+// Middleware to get current user ID from JWT token
+const getCurrentUserId = async (req) => {
+    try {
+        const token = req.headers.authorization?.replace('Bearer ', '');
+        if (!token) {
+            return null;
+        }
+
+        // Verify JWT token and get user data
+        const decoded = auth.verifyJWT(token);
+        if (!decoded || !decoded.user_id) {
+            return null;
+        }
+
+        return decoded.user_id;
+    } catch (error) {
+        console.error('Error getting current user ID:', error);
+        return null;
+    }
+};
 
 // Email throttling helper: avoid duplicate emails for same user/food/type/level within window
 async function shouldSendSpoilageEmail(db, {
@@ -170,11 +192,11 @@ router.post('/', Auth.authenticateToken, async (req, res) => {
     }
 });
 
-// POST /api/alerts/scanner - Create an alert from SmartSense Scanner (no auth fallback)
+// POST /api/alerts/scanner - Create an alert from SmartSense Scanner
 router.post('/scanner', async (req, res) => {
     try {
         const {
-            user_id, // optional; defaults to Arduino user 11
+            user_id,
             food_id,
             sensor_id,
             message,
@@ -191,7 +213,18 @@ router.post('/scanner', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Alert message is required.' });
         }
 
-        const uid = user_id || 11;
+        // Get user ID from JWT token or request body - user_id is required
+        let uid = await getCurrentUserId(req);
+        if (!uid) {
+            uid = user_id;
+        }
+        
+        if (!uid) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'User ID is required. Please provide user_id in request body or authenticate with a valid JWT token.' 
+            });
+        }
 
         // Insert alert (columns present in DB; sensor_id allowed if exists, else NULL)
         const sql = `INSERT INTO alerts 
