@@ -857,7 +857,8 @@ router.get('/arduino-data', async (req, res) => {
         console.log('📡 GET /arduino-data - Received:', {
             query: req.query,
             body: req.body,
-            extracted: { temperature, humidity, gas }
+            extracted: { temperature, humidity, gas },
+            requested_user_id: req.query.user_id
         });
         
         // Validate data
@@ -866,9 +867,40 @@ router.get('/arduino-data', async (req, res) => {
             return res.status(400).json({ error: 'No sensor data provided' });
         }
 
-        // For Arduino compatibility, we'll use user ID 11
-        // In production, you might want to use device-specific authentication
-        let currentUserId = 11; // User ID 11 for Arduino data
+        // user_id is required
+        if (!req.query.user_id) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'user_id is required. Please provide user_id as a query parameter.' 
+            });
+        }
+
+        const currentUserId = parseInt(req.query.user_id);
+        
+        // Validate user_id
+        if (isNaN(currentUserId) || currentUserId <= 0) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'Invalid user_id. Must be a positive integer.' 
+            });
+        }
+        
+        // Verify user exists
+        try {
+            const userCheck = await db.query('SELECT user_id FROM users WHERE user_id = ?', [currentUserId]);
+            if (userCheck.length === 0) {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: `User with ID ${currentUserId} not found` 
+                });
+            }
+        } catch (error) {
+            console.error('Error checking user existence:', error);
+            return res.status(500).json({ 
+                success: false, 
+                error: 'Failed to verify user existence' 
+            });
+        }
 
         // Check if there's an active scan session for this user
         const activeSessionQuery = `
@@ -882,7 +914,7 @@ router.get('/arduino-data', async (req, res) => {
         const activeSessions = await db.query(activeSessionQuery, [currentUserId]);
         
         if (activeSessions.length === 0) {
-            console.log('🚫 Arduino data blocked - No active scan session for user', currentUserId);
+            console.log('🚫 Arduino data blocked - No active scan session for user_id:', currentUserId);
             return res.status(403).json({ 
                 success: false,
                 error: 'No active scan session. Please start a scan session first.',
@@ -892,7 +924,10 @@ router.get('/arduino-data', async (req, res) => {
         }
 
         const activeSession = activeSessions[0];
-        console.log('✅ Arduino data allowed - Active scan session found:', activeSession.session_id);
+        console.log('✅ Arduino data allowed - Active scan session found:', {
+            session_id: activeSession.session_id,
+            user_id: currentUserId
+        });
 
         // Check if Arduino sensors exist, if not create them
         const sensorTypes = [];
@@ -994,7 +1029,8 @@ router.post('/arduino-data', async (req, res) => {
         console.log('📡 POST /arduino-data - Received:', {
             query: req.query,
             body: req.body,
-            extracted: { temperature, humidity, gas }
+            extracted: { temperature, humidity, gas },
+            requested_user_id: req.body.user_id || req.query.user_id
         });
         
         // Validate data
@@ -1003,9 +1039,41 @@ router.post('/arduino-data', async (req, res) => {
             return res.status(400).json({ error: 'No sensor data provided' });
         }
 
-        // For Arduino compatibility, we'll use user ID 11
-        // In production, you might want to use device-specific authentication
-        let currentUserId = 11; // User ID 11 for Arduino data
+        // user_id is required - check body first, then query parameters
+        const user_id = req.body.user_id || req.query.user_id;
+        if (!user_id) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'user_id is required. Please provide user_id in request body or query parameters.' 
+            });
+        }
+
+        const currentUserId = parseInt(user_id);
+        
+        // Validate user_id
+        if (isNaN(currentUserId) || currentUserId <= 0) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'Invalid user_id. Must be a positive integer.' 
+            });
+        }
+        
+        // Verify user exists
+        try {
+            const userCheck = await db.query('SELECT user_id FROM users WHERE user_id = ?', [currentUserId]);
+            if (userCheck.length === 0) {
+                return res.status(404).json({ 
+                    success: false, 
+                    error: `User with ID ${currentUserId} not found` 
+                });
+            }
+        } catch (error) {
+            console.error('Error checking user existence:', error);
+            return res.status(500).json({ 
+                success: false, 
+                error: 'Failed to verify user existence' 
+            });
+        }
 
         // Check if there's an active scan session for this user
         const activeSessionQuery = `
@@ -1019,7 +1087,7 @@ router.post('/arduino-data', async (req, res) => {
         const activeSessions = await db.query(activeSessionQuery, [currentUserId]);
         
         if (activeSessions.length === 0) {
-            console.log('🚫 Arduino data blocked - No active scan session for user', currentUserId);
+            console.log('🚫 Arduino data blocked - No active scan session for user_id:', currentUserId);
             return res.status(403).json({ 
                 success: false,
                 error: 'No active scan session. Please start a scan session first.',
@@ -1029,7 +1097,10 @@ router.post('/arduino-data', async (req, res) => {
         }
 
         const activeSession = activeSessions[0];
-        console.log('✅ Arduino data allowed - Active scan session found:', activeSession.session_id);
+        console.log('✅ Arduino data allowed - Active scan session found:', {
+            session_id: activeSession.session_id,
+            user_id: currentUserId
+        });
 
         // Check if Arduino sensors exist, if not create them
         const sensorTypes = [];
