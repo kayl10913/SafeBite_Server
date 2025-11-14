@@ -64,7 +64,7 @@ const corsOptions = isDevelopment ? {
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-scan-id', 'X-Scan-Id']
 } : {
     origin: [
         'https://safebite-server-zh2r.onrender.com',
@@ -73,7 +73,7 @@ const corsOptions = isDevelopment ? {
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-scan-id', 'X-Scan-Id']
 };
 
 app.use(cors(corsOptions));
@@ -374,8 +374,9 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/sensor-analytics', sensorAnalyticsRoutes);
 app.use('/api/feedbacks', feedbacksRoutes);
-app.use('/api/ml', mlRoutes);
+// Register mlTrainingRoutes BEFORE mlRoutes to avoid route conflicts (/:id catches /check)
 app.use('/api/ml', mlTrainingRoutes);
+app.use('/api/ml', mlRoutes);
 // Alias to match frontend calls like /api/ml-training/...
 app.use('/api/ml-training', mlTrainingRoutes);
 app.use('/api/ml', mlPredictionRoutes);
