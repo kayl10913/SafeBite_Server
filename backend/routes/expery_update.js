@@ -18,6 +18,9 @@ async function updateExpiredPredictions() {
                 mp.food_name,
                 mp.spoilage_probability,
                 mp.expiration_date,
+                mp.temperature,
+                mp.humidity,
+                mp.gas_level,
                 u.email,
                 u.first_name,
                 u.last_name
@@ -29,9 +32,12 @@ async function updateExpiredPredictions() {
                 AND mp.spoilage_status != 'unsafe'
         `;
 
-        const [expiredItems] = await db.query(selectQuery);
+        const expiredItems = await db.query(selectQuery);
+        
+        console.log(`[Expiry Update] Found ${expiredItems ? expiredItems.length : 0} expired items to process`);
 
         if (!expiredItems || expiredItems.length === 0) {
+            console.log('[Expiry Update] No expired items found');
             return {
                 success: true,
                 updated: 0,
@@ -40,6 +46,17 @@ async function updateExpiredPredictions() {
                 timestamp: new Date().toISOString()
             };
         }
+
+        // Log details of expired items
+        console.log(`[Expiry Update] Processing ${expiredItems.length} expired items:`, 
+            expiredItems.map(item => ({
+                prediction_id: item.prediction_id,
+                food_name: item.food_name,
+                expiration_date: item.expiration_date,
+                current_status: 'will be updated to unsafe',
+                user_email: item.email || 'no email'
+            }))
+        );
 
         // Update all expired ML predictions
         const updateQuery = `
@@ -58,7 +75,23 @@ async function updateExpiredPredictions() {
 
         const result = await db.query(updateQuery);
         
-        console.log(`[Expiry Update] Updated ${result.affectedRows} expired ML predictions to unsafe status`);
+        console.log(`[Expiry Update] UPDATE query executed. Affected rows: ${result.affectedRows}`);
+        console.log(`[Expiry Update] Expected to update: ${expiredItems.length} items`);
+        
+        if (result.affectedRows === 0 && expiredItems.length > 0) {
+            console.warn('[Expiry Update] WARNING: UPDATE query affected 0 rows, but SELECT found items. This may indicate a data mismatch.');
+            console.warn('[Expiry Update] Checking if items were already updated...');
+            
+            // Verify by checking a sample item
+            if (expiredItems.length > 0) {
+                const sampleId = expiredItems[0].prediction_id;
+                const verifyQuery = `SELECT prediction_id, spoilage_status, expiration_date FROM ml_predictions WHERE prediction_id = ?`;
+                const verifyResult = await db.query(verifyQuery, [sampleId]);
+                console.log('[Expiry Update] Sample item status:', verifyResult[0]);
+            }
+        } else if (result.affectedRows > 0) {
+            console.log(`[Expiry Update] ✅ Successfully updated ${result.affectedRows} expired ML predictions to unsafe status`);
+        }
 
         // Create alerts and send emails for each expired item
         let alertsCreated = 0;
@@ -107,7 +140,9 @@ async function updateExpiredPredictions() {
                 if (item.email) {
                     try {
                         const userName = `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'User';
-                        await EmailService.sendSpoilageAlertEmail(
+                        console.log(`[Expiry Update] Sending email to ${item.email} for ${foodName}`);
+                        
+                        const emailResult = await EmailService.sendSpoilageAlertEmail(
                             item.email,
                             userName,
                             {
@@ -116,13 +151,27 @@ async function updateExpiredPredictions() {
                                 alertType: 'system',
                                 probability: newProbability,
                                 recommendation: recommendedAction,
-                                message: alertMessage
+                                message: alertMessage,
+                                sensorReadings: {
+                                    temperature: item.temperature || undefined,
+                                    humidity: item.humidity || undefined,
+                                    gas_level: item.gas_level || undefined
+                                }
                             }
                         );
-                        emailsSent++;
+                        
+                        if (emailResult.success) {
+                            console.log(`[Expiry Update] ✅ Email sent successfully to ${item.email}`);
+                            emailsSent++;
+                        } else {
+                            console.error(`[Expiry Update] ❌ Email failed for ${item.email}:`, emailResult.message || emailResult.error);
+                        }
                     } catch (emailError) {
-                        console.error(`[Expiry Update] Error sending email for prediction_id ${item.prediction_id}:`, emailError.message);
+                        console.error(`[Expiry Update] ❌ Error sending email for prediction_id ${item.prediction_id}:`, emailError.message);
+                        console.error(`[Expiry Update] Email error stack:`, emailError.stack);
                     }
+                } else {
+                    console.log(`[Expiry Update] ⚠️ No email address for user_id ${item.user_id}, skipping email`);
                 }
             } catch (alertError) {
                 console.error(`[Expiry Update] Error creating alert for prediction_id ${item.prediction_id}:`, alertError.message);
@@ -151,6 +200,7 @@ async function updateExpiredPredictions() {
 async function updateExpiringSoonPredictions() {
     try {
         // First, get all predictions expiring soon that need to be updated with user info
+        // Include both 'safe' and 'caution' items to refresh/update them
         const selectQuery = `
             SELECT 
                 mp.prediction_id,
@@ -159,6 +209,10 @@ async function updateExpiringSoonPredictions() {
                 mp.food_name,
                 mp.spoilage_probability,
                 mp.expiration_date,
+                mp.spoilage_status,
+                mp.temperature,
+                mp.humidity,
+                mp.gas_level,
                 u.email,
                 u.first_name,
                 u.last_name
@@ -168,12 +222,15 @@ async function updateExpiringSoonPredictions() {
                 mp.expiration_date IS NOT NULL
                 AND mp.expiration_date >= CURDATE()
                 AND mp.expiration_date <= DATE_ADD(CURDATE(), INTERVAL 1 DAY)
-                AND mp.spoilage_status = 'safe'
+                AND mp.spoilage_status IN ('safe', 'caution')
         `;
 
-        const [expiringItems] = await db.query(selectQuery);
+        const expiringItems = await db.query(selectQuery);
+        
+        console.log(`[Expiry Update] Found ${expiringItems ? expiringItems.length : 0} expiring soon items to process`);
 
         if (!expiringItems || expiringItems.length === 0) {
+            console.log('[Expiry Update] No expiring soon items found');
             return {
                 success: true,
                 updated: 0,
@@ -183,7 +240,20 @@ async function updateExpiringSoonPredictions() {
             };
         }
 
-        // Update all expiring soon predictions
+        // Log details of expiring soon items
+        console.log(`[Expiry Update] Processing ${expiringItems.length} expiring soon items:`, 
+            expiringItems.map(item => ({
+                prediction_id: item.prediction_id,
+                food_name: item.food_name,
+                expiration_date: item.expiration_date,
+                current_status: item.spoilage_status,
+                will_be_updated_to: 'caution',
+                user_email: item.email || 'no email'
+            }))
+        );
+
+        // Update all expiring soon predictions (both safe and caution items)
+        // This ensures items already in caution status are also refreshed/updated
         const updateQuery = `
             UPDATE ml_predictions
             SET 
@@ -197,14 +267,32 @@ async function updateExpiringSoonPredictions() {
                 expiration_date IS NOT NULL
                 AND expiration_date >= CURDATE()
                 AND expiration_date <= DATE_ADD(CURDATE(), INTERVAL 1 DAY)
-                AND spoilage_status = 'safe'
+                AND spoilage_status IN ('safe', 'caution')
         `;
 
         const result = await db.query(updateQuery);
         
-        console.log(`[Expiry Update] Updated ${result.affectedRows} expiring soon predictions to caution status`);
+        console.log(`[Expiry Update] UPDATE query executed. Affected rows: ${result.affectedRows}`);
+        console.log(`[Expiry Update] Expected to update: ${expiringItems.length} items`);
+        
+        if (result.affectedRows === 0 && expiringItems.length > 0) {
+            console.warn('[Expiry Update] WARNING: UPDATE query affected 0 rows, but SELECT found items. This may indicate a data mismatch.');
+            console.warn('[Expiry Update] Checking if items were already updated...');
+            
+            // Verify by checking a sample item
+            if (expiringItems.length > 0) {
+                const sampleId = expiringItems[0].prediction_id;
+                const verifyQuery = `SELECT prediction_id, spoilage_status, expiration_date FROM ml_predictions WHERE prediction_id = ?`;
+                const verifyResult = await db.query(verifyQuery, [sampleId]);
+                console.log('[Expiry Update] Sample item status:', verifyResult[0]);
+            }
+        } else if (result.affectedRows > 0) {
+            console.log(`[Expiry Update] ✅ Successfully updated ${result.affectedRows} expiring soon predictions to caution status`);
+        }
 
         // Create alerts and send emails for each expiring soon item
+        // Only create alerts/emails for items that were 'safe' (newly changed to caution)
+        // Items already 'caution' will be updated but won't trigger new alerts to avoid spam
         let alertsCreated = 0;
         let emailsSent = 0;
         for (const item of expiringItems) {
@@ -222,38 +310,50 @@ async function updateExpiringSoonPredictions() {
                 const alertMessage = `Expiry Warning: ${foodName} is expiring soon (expires on ${expirationDate}). Consume within 1 day.`;
                 const recommendedAction = 'Consume soon or improve storage conditions. Monitor closely for signs of spoilage.';
                 
-                const alertData = JSON.stringify({
-                    source: 'expiry_update',
-                    condition: 'caution',
-                    expiration_date: item.expiration_date,
-                    prediction_id: item.prediction_id,
-                    timestamp: new Date().toISOString()
-                });
+                // Only create alert if item was 'safe' (newly changed to caution)
+                // Items already 'caution' are updated but don't need new alerts
+                const wasSafe = item.spoilage_status === 'safe';
+                
+                if (wasSafe) {
+                    const alertData = JSON.stringify({
+                        source: 'expiry_update',
+                        condition: 'caution',
+                        expiration_date: item.expiration_date,
+                        prediction_id: item.prediction_id,
+                        timestamp: new Date().toISOString()
+                    });
 
-                await db.query(
-                    `INSERT INTO alerts 
-                    (user_id, food_id, message, alert_level, alert_type, ml_prediction_id, spoilage_probability, recommended_action, is_ml_generated, alert_data)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [
-                        item.user_id,
-                        item.food_id || null,
-                        alertMessage,
-                        'Medium',
-                        'system',
-                        item.prediction_id || null,
-                        newProbability,
-                        recommendedAction,
-                        0,
-                        alertData
-                    ]
-                );
-                alertsCreated++;
+                    await db.query(
+                        `INSERT INTO alerts 
+                        (user_id, food_id, message, alert_level, alert_type, ml_prediction_id, spoilage_probability, recommended_action, is_ml_generated, alert_data)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [
+                            item.user_id,
+                            item.food_id || null,
+                            alertMessage,
+                            'Medium',
+                            'system',
+                            item.prediction_id || null,
+                            newProbability,
+                            recommendedAction,
+                            0,
+                            alertData
+                        ]
+                    );
+                    alertsCreated++;
+                    console.log(`[Expiry Update] Created alert for ${foodName} (status changed from safe to caution)`);
+                } else {
+                    console.log(`[Expiry Update] Skipping alert for ${foodName} (already in caution status, just refreshing)`);
+                }
 
                 // Send email notification if user email exists
-                if (item.email) {
+                // Only send email if item was 'safe' (newly changed to caution) to avoid spam
+                if (item.email && wasSafe) {
                     try {
                         const userName = `${item.first_name || ''} ${item.last_name || ''}`.trim() || 'User';
-                        await EmailService.sendSpoilageAlertEmail(
+                        console.log(`[Expiry Update] Sending email to ${item.email} for ${foodName}`);
+                        
+                        const emailResult = await EmailService.sendSpoilageAlertEmail(
                             item.email,
                             userName,
                             {
@@ -262,13 +362,29 @@ async function updateExpiringSoonPredictions() {
                                 alertType: 'system',
                                 probability: newProbability,
                                 recommendation: recommendedAction,
-                                message: alertMessage
+                                message: alertMessage,
+                                sensorReadings: {
+                                    temperature: item.temperature || undefined,
+                                    humidity: item.humidity || undefined,
+                                    gas_level: item.gas_level || undefined
+                                }
                             }
                         );
-                        emailsSent++;
+                        
+                        if (emailResult.success) {
+                            console.log(`[Expiry Update] ✅ Email sent successfully to ${item.email}`);
+                            emailsSent++;
+                        } else {
+                            console.error(`[Expiry Update] ❌ Email failed for ${item.email}:`, emailResult.message || emailResult.error);
+                        }
                     } catch (emailError) {
-                        console.error(`[Expiry Update] Error sending email for prediction_id ${item.prediction_id}:`, emailError.message);
+                        console.error(`[Expiry Update] ❌ Error sending email for prediction_id ${item.prediction_id}:`, emailError.message);
+                        console.error(`[Expiry Update] Email error stack:`, emailError.stack);
                     }
+                } else if (item.email && !wasSafe) {
+                    console.log(`[Expiry Update] Skipping email for ${foodName} (already in caution status, just refreshing)`);
+                } else {
+                    console.log(`[Expiry Update] ⚠️ No email address for user_id ${item.user_id}, skipping email`);
                 }
             } catch (alertError) {
                 console.error(`[Expiry Update] Error creating alert for prediction_id ${item.prediction_id}:`, alertError.message);
