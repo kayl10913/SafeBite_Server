@@ -12,8 +12,13 @@ async function verifyRecaptcha(token, remoteIp) {
         const secret = process.env.RECAPTCHA_SECRET;
         
         if (!secret) {
-            console.warn('reCAPTCHA secret not configured, skipping verification');
-            return true; // Skip verification if not configured
+            console.warn('⚠️  reCAPTCHA secret not configured in environment variables, skipping verification');
+            return {
+                success: true,
+                score: 1.0,
+                action: 'skip-verification',
+                skipped: true
+            };
         }
 
         const verifyUrl = 'https://www.google.com/recaptcha/api/siteverify';
@@ -36,20 +41,30 @@ async function verifyRecaptcha(token, remoteIp) {
                 action: response.data.action || 'unknown'
             };
         } else {
-            console.log('reCAPTCHA verification failed:', response.data);
+            const errorCodes = response.data['error-codes'] || [];
+            const errorMessage = errorCodes.join(', ');
+            console.log('reCAPTCHA verification failed:', {
+                success: response.data.success,
+                errorCodes: errorCodes,
+                errorMessage: errorMessage
+            });
             return {
                 success: false,
                 score: 0,
-                action: 'unknown'
+                action: 'unknown',
+                error: errorMessage,
+                errorCodes: errorCodes
             };
         }
 
     } catch (error) {
-        console.error('reCAPTCHA verification error:', error);
+        console.error('reCAPTCHA verification error:', error.message || error);
         return {
             success: false,
             score: 0,
-            action: 'unknown'
+            action: 'unknown',
+            error: error.message || 'Network error during reCAPTCHA verification',
+            errorCodes: ['network-error']
         };
     }
 }

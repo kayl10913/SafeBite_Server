@@ -29,13 +29,40 @@ router.post('/', async (req, res) => {
         if (recaptcha_token) {
             const recaptchaResult = await verifyRecaptcha(recaptcha_token, req.ip);
             if (!recaptchaResult.success) {
+                // Log detailed error for debugging
+                console.error('reCAPTCHA verification failed:', {
+                    error: recaptchaResult.error,
+                    errorCodes: recaptchaResult.errorCodes,
+                    ip: req.ip,
+                    tokenLength: recaptcha_token ? recaptcha_token.length : 0
+                });
+                
                 // In development, allow form submission even if reCAPTCHA fails due to domain issues
-                if (process.env.NODE_ENV === 'development' && recaptchaResult.error && recaptchaResult.error.includes('localhost')) {
-                    console.log('⚠️  reCAPTCHA domain issue in development - allowing submission');
+                const isDevelopment = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV;
+                const isDomainError = recaptchaResult.errorCodes && (
+                    recaptchaResult.errorCodes.includes('invalid-input-response') ||
+                    recaptchaResult.errorCodes.includes('timeout-or-duplicate') ||
+                    recaptchaResult.errorCodes.includes('bad-request')
+                );
+                
+                if (isDevelopment && isDomainError) {
+                    console.log('⚠️  reCAPTCHA domain/configuration issue in development - allowing submission');
                 } else {
+                    // Provide more helpful error message
+                    let errorMessage = 'reCAPTCHA verification failed. Please try again.';
+                    if (recaptchaResult.errorCodes && recaptchaResult.errorCodes.includes('invalid-input-secret')) {
+                        errorMessage = 'reCAPTCHA configuration error. Please contact support.';
+                    } else if (recaptchaResult.errorCodes && recaptchaResult.errorCodes.includes('timeout-or-duplicate')) {
+                        errorMessage = 'reCAPTCHA token expired. Please refresh the page and try again.';
+                    }
+                    
                     return res.status(400).json({ 
                         success: false, 
-                        message: 'reCAPTCHA verification failed. Please try again.' 
+                        message: errorMessage,
+                        debug: isDevelopment ? {
+                            error: recaptchaResult.error,
+                            errorCodes: recaptchaResult.errorCodes
+                        } : undefined
                     });
                 }
             }
