@@ -356,32 +356,33 @@ router.get('/', Auth.authenticateToken, async (req, res) => {
     const user_id = req.user.user_id;
     const { limit = 50, offset = 0, alert_type, alert_level, is_resolved } = req.query;
 
+    // Build query outside try block so it's available in catch block
+    let query = `
+        SELECT a.*, fi.name as food_name, fi.category as food_category
+        FROM alerts a
+        LEFT JOIN food_items fi ON a.food_id = fi.food_id
+        WHERE a.user_id = ?
+    `;
+    const params = [user_id];
+
+    // Add filters
+    if (alert_type) {
+        query += ' AND a.alert_type = ?';
+        params.push(alert_type);
+    }
+    if (alert_level) {
+        query += ' AND a.alert_level = ?';
+        params.push(alert_level);
+    }
+    if (is_resolved !== undefined) {
+        query += ' AND a.is_resolved = ?';
+        params.push(is_resolved === 'true' ? 1 : 0);
+    }
+
+    query += ' ORDER BY a.timestamp DESC LIMIT ? OFFSET ?';
+    params.push(parseInt(limit), parseInt(offset));
+
     try {
-        let query = `
-            SELECT a.*, fi.name as food_name, fi.category as food_category
-            FROM alerts a
-            LEFT JOIN food_items fi ON a.food_id = fi.food_id
-            WHERE a.user_id = ?
-        `;
-        const params = [user_id];
-
-        // Add filters
-        if (alert_type) {
-            query += ' AND a.alert_type = ?';
-            params.push(alert_type);
-        }
-        if (alert_level) {
-            query += ' AND a.alert_level = ?';
-            params.push(alert_level);
-        }
-        if (is_resolved !== undefined) {
-            query += ' AND a.is_resolved = ?';
-            params.push(is_resolved === 'true' ? 1 : 0);
-        }
-
-        query += ' ORDER BY a.timestamp DESC LIMIT ? OFFSET ?';
-        params.push(parseInt(limit), parseInt(offset));
-
         const rows = await db.query(query, params);
 
         // Check if rows exists and is an array
@@ -398,7 +399,30 @@ router.get('/', Auth.authenticateToken, async (req, res) => {
         res.json({ success: true, data: alerts });
     } catch (error) {
         console.error('Error fetching alerts:', error);
-        res.status(500).json({ success: false, error: 'Database error fetching alerts.' });
+        
+        // Handle connection errors more gracefully
+        if (error.code === 'ECONNRESET' || error.code === 'PROTOCOL_CONNECTION_LOST' || error.code === 'ETIMEDOUT') {
+            console.warn('Database connection error in alerts route, attempting to recover...');
+            // Try one more time after a short delay
+            try {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                const retryRows = await db.query(query, params);
+                if (retryRows && Array.isArray(retryRows)) {
+                    const retryAlerts = retryRows.map(row => ({
+                        ...row,
+                        alert_data: row.alert_data ? JSON.parse(row.alert_data) : null
+                    }));
+                    return res.json({ success: true, data: retryAlerts });
+                }
+            } catch (retryError) {
+                console.error('Retry failed:', retryError);
+            }
+        }
+        
+        res.status(500).json({ 
+            success: false, 
+            error: error.code === 'ECONNRESET' ? 'Database connection error. Please try again.' : 'Database error fetching alerts.' 
+        });
     }
 });
 
