@@ -93,7 +93,7 @@ function analyzeGasEmissionThresholds(gasLevel) {
             status: 'caution',
             probability: 60,
             confidence: 85,
-            recommendation: 'WARNING: Elevated Gas Levels (50-69 ppm). Food may be starting to spoil. Inspect carefully for any signs of spoilage (smell, color, texture). Consume within 24 hours or discard if suspicious.',
+            recommendation: 'WARNING: Elevated Gas Levels (50-69 ppm). Food may be starting to spoil. Inspect carefully for any signs of spoilage (smell, color, texture). Consume within 3 hours or discard if suspicious.',
             threshold: '50-69 ppm',
             gasLevel: gasLevel,
             alertLevel: 'warning',
@@ -144,7 +144,7 @@ function getGasEmissionThresholds() {
             min: 50,
             max: 69,
             status: 'Early Warning',
-            description: 'Elevated gas levels detected. Food may be starting to spoil. Inspect carefully and consume within 24 hours or discard if suspicious.'
+            description: 'Elevated gas levels detected. Food may be starting to spoil. Inspect carefully and consume within 3 hours or discard if suspicious.'
         },
         high: {
             min: 70,

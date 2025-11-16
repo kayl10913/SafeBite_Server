@@ -63,8 +63,20 @@ const corsOptions = isDevelopment ? {
         }
     },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: [
+        'Content-Type', 
+        'Authorization', 
+        'X-Requested-With', 
+        'x-scan-id', 
+        'X-Scan-Id',
+        'X-SCAN-ID',
+        'Accept',
+        'Origin'
+    ],
+    exposedHeaders: ['Content-Type', 'Authorization'],
+    preflightContinue: false,
+    optionsSuccessStatus: 204
 } : {
     origin: [
         'https://safebite-server-zh2r.onrender.com',
@@ -72,11 +84,26 @@ const corsOptions = isDevelopment ? {
         'https://www.safebiteph.com'
     ],
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: [
+        'Content-Type', 
+        'Authorization', 
+        'X-Requested-With', 
+        'x-scan-id', 
+        'X-Scan-Id',
+        'X-SCAN-ID',
+        'Accept',
+        'Origin'
+    ],
+    exposedHeaders: ['Content-Type', 'Authorization'],
+    preflightContinue: false,
+    optionsSuccessStatus: 204
 };
 
 app.use(cors(corsOptions));
+
+// Explicit OPTIONS handler for CORS preflight (backup)
+app.options('*', cors(corsOptions));
 
 
 // Rate limiting is disabled for development
@@ -330,10 +357,11 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/sensor-analytics', sensorAnalyticsRoutes);
 app.use('/api/feedbacks', feedbacksRoutes);
+// Register mlTrainingRoutes BEFORE mlRoutes to avoid route conflicts (/:id catches /check)
+// IMPORTANT: Register specific routes first, then catch-all routes
+app.use('/api/ml-training', mlTrainingRoutes); // Register alias first
+app.use('/api/ml', mlTrainingRoutes); // Register mlTrainingRoutes before mlRoutes
 app.use('/api/ml', mlRoutes);
-app.use('/api/ml', mlTrainingRoutes);
-// Alias to match frontend calls like /api/ml-training/...
-app.use('/api/ml-training', mlTrainingRoutes);
 app.use('/api/ml', mlPredictionRoutes);
 app.use('/api/ai', aiTrainingRoutes);
 app.use('/api/ai', aiFoodAnalysisRoutes);

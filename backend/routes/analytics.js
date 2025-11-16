@@ -2,9 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../../db/db'); // Adjust path to your db connection
 
-// --- MOCK DATA GENERATION ---
-// In a real application, you would generate this from your database.
-// For now, we'll create some mock data to simulate chart data.
+
 
 // Generates an array of daily values for a month.
 const generateMonthlyData = (days, maxVal) => {

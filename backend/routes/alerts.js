@@ -130,9 +130,16 @@ router.post('/', Auth.authenticateToken, async (req, res) => {
         // Log activity
         await db.query('INSERT INTO activity_logs (user_id, action) VALUES (?, ?)', [user_id, `Created ${alert_level} alert: ${message}`]);
 
-        // Attempt to send email notification for medium/high severity
+        // Attempt to send email notification for medium/high severity (caution and unsafe)
         try {
             if (String(alert_level).toLowerCase() !== 'low') {
+                console.log(`📧 [Alerts] Preparing to send email for ${alert_level} alert:`, {
+                    user_id,
+                    food_id: foodIdFinal,
+                    alert_type: normalizedType,
+                    alert_level
+                });
+                
                 const canSend = await shouldSendSpoilageEmail(db, {
                     user_id,
                     food_id: foodIdFinal,
@@ -140,40 +147,58 @@ router.post('/', Auth.authenticateToken, async (req, res) => {
                     alert_level
                 });
                 if (!canSend) {
-                    // Throttled: skip email
+                    console.log(`📧 [Alerts] Email throttled - similar alert sent recently`);
                 } else {
-                const userRows = await db.query('SELECT first_name, last_name, email FROM users WHERE user_id = ? LIMIT 1', [user_id]);
-                const user = Array.isArray(userRows) ? userRows[0] : null;
-                if (user && user.email) {
-                    let foodName = null;
-                    if (foodIdFinal) {
-                        const fi = await db.query('SELECT name FROM food_items WHERE food_id = ? LIMIT 1', [foodIdFinal]);
-                        if (Array.isArray(fi) && fi.length > 0) foodName = fi[0].name;
-                    }
-                    // Parse alert_data for sensor readings
-                    let readings = null;
-                    try {
-                        const data = typeof alert_data === 'string' ? JSON.parse(alert_data) : (alert_data || {});
-                        readings = data && data.sensor_readings ? data.sensor_readings : null;
-                    } catch (_) {}
+                    const userRows = await db.query('SELECT first_name, last_name, email FROM users WHERE user_id = ? LIMIT 1', [user_id]);
+                    const user = Array.isArray(userRows) ? userRows[0] : null;
+                    if (user && user.email) {
+                        let foodName = null;
+                        if (foodIdFinal) {
+                            const fi = await db.query('SELECT name FROM food_items WHERE food_id = ? LIMIT 1', [foodIdFinal]);
+                            if (Array.isArray(fi) && fi.length > 0) foodName = fi[0].name;
+                        }
+                        // Parse alert_data for sensor readings
+                        let readings = null;
+                        try {
+                            const data = typeof alert_data === 'string' ? JSON.parse(alert_data) : (alert_data || {});
+                            readings = data && data.sensor_readings ? data.sensor_readings : null;
+                        } catch (_) {}
 
-                    await EmailService.sendSpoilageAlertEmail(
-                        user.email,
-                        `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'User',
-                        {
+                        console.log(`📧 [Alerts] Sending email to ${user.email} for ${alert_level} alert:`, {
                             foodName,
                             alertLevel: alert_level,
-                            alertType: normalizedType,
-                            probability: spoilage_probability,
-                            recommendation: recommended_action,
-                            message,
-                            sensorReadings: readings
+                            probability: spoilage_probability
+                        });
+
+                        const emailResult = await EmailService.sendSpoilageAlertEmail(
+                            user.email,
+                            `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'User',
+                            {
+                                foodName,
+                                alertLevel: alert_level,
+                                alertType: normalizedType,
+                                probability: spoilage_probability,
+                                recommendation: recommended_action,
+                                message,
+                                sensorReadings: readings
+                            }
+                        );
+                        
+                        if (emailResult.success) {
+                            console.log(`📧 [Alerts] ✅ Email sent successfully to ${user.email}`);
+                        } else {
+                            console.error(`📧 [Alerts] ❌ Email failed:`, emailResult.message || emailResult.error);
                         }
-                    );
+                    } else {
+                        console.log(`📧 [Alerts] ⚠️ No email address for user_id ${user_id}`);
+                    }
                 }
-                }
+            } else {
+                console.log(`📧 [Alerts] Skipping email - alert level is Low`);
             }
-        } catch (_) { }
+        } catch (emailError) {
+            console.error(`📧 [Alerts] Error sending email:`, emailError.message);
+        }
 
         res.json({ 
             success: true, 
@@ -250,9 +275,16 @@ router.post('/scanner', async (req, res) => {
         // Also log activity
         try { await db.query('INSERT INTO activity_logs (user_id, action) VALUES (?, ?)', [uid, `Created ${alert_level} scanner alert: ${message}`]); } catch (_) {}
 
-        // Send email notification for scanner alerts (medium/high)
+        // Send email notification for scanner alerts (medium/high - caution and unsafe)
         try {
             if (String(alert_level).toLowerCase() !== 'low') {
+                console.log(`📧 [Scanner Alerts] Preparing to send email for ${alert_level} alert:`, {
+                    user_id: uid,
+                    food_id,
+                    alert_type: alert_type,
+                    alert_level
+                });
+                
                 const canSend = await shouldSendSpoilageEmail(db, {
                     user_id: uid,
                     food_id,
@@ -260,39 +292,57 @@ router.post('/scanner', async (req, res) => {
                     alert_level
                 });
                 if (!canSend) {
-                    // Throttled: skip email
+                    console.log(`📧 [Scanner Alerts] Email throttled - similar alert sent recently`);
                 } else {
-                const userRows = await db.query('SELECT first_name, last_name, email FROM users WHERE user_id = ? LIMIT 1', [uid]);
-                const user = Array.isArray(userRows) ? userRows[0] : null;
-                if (user && user.email) {
-                    let foodName = null;
-                    if (food_id) {
-                        const fi = await db.query('SELECT name FROM food_items WHERE food_id = ? LIMIT 1', [food_id]);
-                        if (Array.isArray(fi) && fi.length > 0) foodName = fi[0].name;
-                    }
-                    let readings = null;
-                    try {
-                        const data = typeof alert_data === 'string' ? JSON.parse(alert_data) : (alert_data || {});
-                        readings = data && data.sensor_readings ? data.sensor_readings : null;
-                    } catch (_) {}
+                    const userRows = await db.query('SELECT first_name, last_name, email FROM users WHERE user_id = ? LIMIT 1', [uid]);
+                    const user = Array.isArray(userRows) ? userRows[0] : null;
+                    if (user && user.email) {
+                        let foodName = null;
+                        if (food_id) {
+                            const fi = await db.query('SELECT name FROM food_items WHERE food_id = ? LIMIT 1', [food_id]);
+                            if (Array.isArray(fi) && fi.length > 0) foodName = fi[0].name;
+                        }
+                        let readings = null;
+                        try {
+                            const data = typeof alert_data === 'string' ? JSON.parse(alert_data) : (alert_data || {});
+                            readings = data && data.sensor_readings ? data.sensor_readings : null;
+                        } catch (_) {}
 
-                    await EmailService.sendSpoilageAlertEmail(
-                        user.email,
-                        `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'User',
-                        {
+                        console.log(`📧 [Scanner Alerts] Sending email to ${user.email} for ${alert_level} alert:`, {
                             foodName,
                             alertLevel: alert_level,
-                            alertType: alert_type,
-                            probability: spoilage_probability,
-                            recommendation: recommended_action,
-                            message,
-                            sensorReadings: readings
+                            probability: spoilage_probability
+                        });
+
+                        const emailResult = await EmailService.sendSpoilageAlertEmail(
+                            user.email,
+                            `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'User',
+                            {
+                                foodName,
+                                alertLevel: alert_level,
+                                alertType: alert_type,
+                                probability: spoilage_probability,
+                                recommendation: recommended_action,
+                                message,
+                                sensorReadings: readings
+                            }
+                        );
+                        
+                        if (emailResult.success) {
+                            console.log(`📧 [Scanner Alerts] ✅ Email sent successfully to ${user.email}`);
+                        } else {
+                            console.error(`📧 [Scanner Alerts] ❌ Email failed:`, emailResult.message || emailResult.error);
                         }
-                    );
+                    } else {
+                        console.log(`📧 [Scanner Alerts] ⚠️ No email address for user_id ${uid}`);
+                    }
                 }
-                }
+            } else {
+                console.log(`📧 [Scanner Alerts] Skipping email - alert level is Low`);
             }
-        } catch (_) { }
+        } catch (emailError) {
+            console.error(`📧 [Scanner Alerts] Error sending email:`, emailError.message);
+        }
 
         return res.json({ success: true, data: { alert_id: result.insertId } });
     } catch (error) {

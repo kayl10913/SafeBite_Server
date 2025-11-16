@@ -861,7 +861,7 @@ function generateRecommendations(spoilageStatus, temperature, humidity, gas_leve
     } else if (gasAnalysis.riskLevel === 'medium') {
         recommendations.main = 'Food shows signs of deterioration. Consume soon.';
         recommendations.details = [
-            'Use within 24 hours',
+            'Use within 3 hours',
             'Check for visible signs of spoilage',
             'Consider cooking thoroughly before consumption',
             'Monitor temperature and humidity'
@@ -899,7 +899,7 @@ function generateRecommendations(spoilageStatus, temperature, humidity, gas_leve
             case 'caution':
                 recommendations.main = 'Food shows signs of deterioration. Consume soon.';
                 recommendations.details = [
-                    'Use within 24 hours',
+                    'Use within 3 hours',
                     'Check for visible signs of spoilage',
                     'Consider cooking thoroughly before consumption',
                     'Monitor temperature and humidity'
@@ -1028,8 +1028,22 @@ async function updateFoodExpiryFromMLPrediction(foodId, spoilageStatus, spoilage
                 daysToAdd = 3; // 3 days for safe items
                 break;
             case 'caution':
-                daysToAdd = 1; // 1 day for caution items
-                break;
+                // 3 hours for caution items - calculate date after adding hours
+                const cautionExpiryDate = new Date(now);
+                cautionExpiryDate.setHours(cautionExpiryDate.getHours() + 3);
+                const year = cautionExpiryDate.getFullYear();
+                const month = String(cautionExpiryDate.getMonth() + 1).padStart(2, '0');
+                const day = String(cautionExpiryDate.getDate()).padStart(2, '0');
+                const formattedDate = `${year}-${month}-${day}`;
+                
+                // Update expiration_date in ml_predictions table for all predictions linked to this food_id
+                await db.query(
+                    'UPDATE ml_predictions SET expiration_date = ? WHERE food_id = ?',
+                    [formattedDate, foodId]
+                );
+                
+                console.log(`Updated ml_predictions expiration_date for food_id ${foodId} to ${formattedDate} based on ML prediction (${spoilageStatus}, ${spoilageProbability}%) - 3 hours expiry`);
+                return true;
             case 'unsafe':
                 // For unsafe items, set to today or yesterday based on probability
                 if (spoilageProbability >= 80) {
