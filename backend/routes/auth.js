@@ -27,12 +27,25 @@ router.post('/login', async (req, res) => {
             return res.status(400).json({ error: 'Password must be at least 6 characters' });
         }
 
-        // Check if user exists (allow both User and Admin roles like PHP version)
+        // Check if user exists (regardless of account status first)
+        const userCheckQuery = "SELECT user_id, account_status FROM users WHERE email = ?";
+        const userCheck = await db.query(userCheckQuery, [email]);
+        
+        // If user exists but is inactive, return specific message
+        if (userCheck.length > 0 && userCheck[0].account_status !== 'active') {
+            return res.status(403).json({ 
+                success: false,
+                error: 'Account is inactive. Please contact admin.',
+                account_status: userCheck[0].account_status
+            });
+        }
+        
+        // Check if user exists with active status (allow both User and Admin roles like PHP version)
         const userQuery = "SELECT user_id, first_name, last_name, username, email, password_hash, role, account_status FROM users WHERE email = ? AND account_status = 'active'";
         const users = await db.query(userQuery, [email]);
         
         if (users.length === 0) {
-            return res.status(401).json({ error: 'Invalid email or password' });
+            return res.status(401).json({ success: false, error: 'Invalid email or password' });
         }
 
         const user = users[0];
@@ -313,12 +326,25 @@ router.post('/forgot-password', async (req, res) => {
             return res.status(400).json({ error: 'Valid email is required' });
         }
 
-        // Check if user exists
+        // Check if user exists (regardless of account status first)
+        const userCheckQuery = "SELECT user_id, account_status FROM users WHERE email = ?";
+        const userCheck = await db.query(userCheckQuery, [email]);
+        
+        // If user exists but is inactive, return specific message
+        if (userCheck.length > 0 && userCheck[0].account_status !== 'active') {
+            return res.status(403).json({ 
+                success: false,
+                error: 'Account is inactive. Please contact admin.',
+                account_status: userCheck[0].account_status
+            });
+        }
+        
+        // Check if user exists with active status
         const userQuery = "SELECT user_id, first_name, last_name FROM users WHERE email = ? AND account_status = 'active'";
         const users = await db.query(userQuery, [email]);
 
         if (users.length === 0) {
-            return res.status(404).json({ error: 'User not found' });
+            return res.status(404).json({ success: false, error: 'User not found' });
         }
 
         const user = users[0];
