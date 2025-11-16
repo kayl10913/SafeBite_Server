@@ -323,19 +323,18 @@ router.post('/forgot-password', async (req, res) => {
         const { email } = req.body;
 
         if (!email || !Auth.validateEmail(email)) {
-            return res.status(400).json({ error: 'Valid email is required' });
+            return res.status(400).json({ success: false, error: 'Valid email is required' });
         }
 
         // Check if user exists (regardless of account status first)
         const userCheckQuery = "SELECT user_id, account_status FROM users WHERE email = ?";
         const userCheck = await db.query(userCheckQuery, [email]);
         
-        // If user exists but is inactive, return specific message
+        // If user exists but is inactive, return error message (no 403, just error response)
         if (userCheck.length > 0 && userCheck[0].account_status !== 'active') {
-            return res.status(403).json({ 
+            return res.status(200).json({ 
                 success: false,
-                error: 'Account is inactive. Please contact admin.',
-                account_status: userCheck[0].account_status
+                error: 'Account is inactive. Please contact admin to reactivate your account.'
             });
         }
         
@@ -344,7 +343,7 @@ router.post('/forgot-password', async (req, res) => {
         const users = await db.query(userQuery, [email]);
 
         if (users.length === 0) {
-            return res.status(404).json({ success: false, error: 'User not found' });
+            return res.status(200).json({ success: false, error: 'User not found' });
         }
 
         const user = users[0];
