@@ -158,10 +158,10 @@ router.post('/register', async (req, res) => {
             return res.status(400).json({ error: 'Passwords do not match' });
         }
 
-        // Verify reCAPTCHA v3 token
+        // Verify reCAPTCHA v3 token (registration uses v3)
         if (recaptcha_token) {
             const clientIp = req.ip || req.connection.remoteAddress || req.socket.remoteAddress;
-            const recaptchaResult = await verifyRecaptcha(recaptcha_token, clientIp);
+            const recaptchaResult = await verifyRecaptcha(recaptcha_token, clientIp, 'v3');
             
             if (!recaptchaResult.success) {
                 return res.status(400).json({ error: 'reCAPTCHA verification failed. Please try again.' });

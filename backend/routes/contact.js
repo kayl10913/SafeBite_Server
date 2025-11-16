@@ -25,14 +25,16 @@ router.post('/', async (req, res) => {
             });
         }
 
-        // Verify reCAPTCHA (skip in development if localhost domain issue)
+        // Verify reCAPTCHA (contact form uses v2)
         if (recaptcha_token) {
-            const recaptchaResult = await verifyRecaptcha(recaptcha_token, req.ip);
+            // Contact form uses reCAPTCHA v2, so explicitly specify version
+            const recaptchaResult = await verifyRecaptcha(recaptcha_token, req.ip, 'v2');
             if (!recaptchaResult.success) {
                 // Log detailed error for debugging
-                console.error('reCAPTCHA verification failed:', {
+                console.error('reCAPTCHA v2 verification failed:', {
                     error: recaptchaResult.error,
                     errorCodes: recaptchaResult.errorCodes,
+                    version: recaptchaResult.version,
                     ip: req.ip,
                     tokenLength: recaptcha_token ? recaptcha_token.length : 0
                 });
