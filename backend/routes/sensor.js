@@ -1659,36 +1659,36 @@ router.get('/activity-data', auth.authenticateToken, async (req, res) => {
                 break;
                 
             case 'monthly':
+                // Count distinct device scan events per month
+                // Group readings by minute to count scans (3 sensors = 1 scan)
                 query = `
                     SELECT 
-                        s.type as sensor_type,
-                        AVG(r.value) as avg_value,
-                        r.unit,
-                        MONTH(r.timestamp) as month_num
-                    FROM sensor s
-                    INNER JOIN readings r ON s.sensor_id = r.sensor_id
+                        MONTH(r.timestamp) as month_num,
+                        COUNT(DISTINCT DATE_FORMAT(r.timestamp, '%Y-%m-%d %H:%i')) as scan_count
+                    FROM readings r
+                    INNER JOIN sensor s ON r.sensor_id = s.sensor_id
                     WHERE s.user_id = ? 
                         AND r.value IS NOT NULL
                         AND YEAR(r.timestamp) = ?
-                    GROUP BY s.type, month_num
+                    GROUP BY month_num
                     ORDER BY month_num ASC
                 `;
                 params = [userId, year];
                 break;
                 
             case 'yearly':
+                // Count distinct device scan events per year
+                // Group readings by minute to count scans (3 sensors = 1 scan)
                 query = `
                     SELECT 
-                        s.type as sensor_type,
-                        AVG(r.value) as avg_value,
-                        r.unit,
-                        YEAR(r.timestamp) as year_num
-                    FROM sensor s
-                    INNER JOIN readings r ON s.sensor_id = r.sensor_id
+                        YEAR(r.timestamp) as year_num,
+                        COUNT(DISTINCT DATE_FORMAT(r.timestamp, '%Y-%m-%d %H:%i')) as scan_count
+                    FROM readings r
+                    INNER JOIN sensor s ON r.sensor_id = s.sensor_id
                     WHERE s.user_id = ? 
                         AND r.value IS NOT NULL
                         AND YEAR(r.timestamp) >= ? - 4
-                    GROUP BY s.type, year_num
+                    GROUP BY year_num
                     ORDER BY year_num ASC
                 `;
                 params = [userId, year];
@@ -1724,6 +1724,7 @@ router.get('/activity-counts', auth.authenticateToken, async (req, res) => {
 
         // Count scan events by grouping readings into distinct minute buckets
         // so one scan with 3 sensors (Temp/Humidity/Gas) counts as 1
+        // Last 30d excludes the current month - counts 30 days before current month starts
         const sql = `
             SELECT 
                 COUNT(DISTINCT CASE 
@@ -1735,7 +1736,8 @@ router.get('/activity-counts', auth.authenticateToken, async (req, res) => {
                     THEN DATE_FORMAT(r.timestamp, '%Y-%m-%d %H:%i') END
                 ) AS scans_7d,
                 COUNT(DISTINCT CASE 
-                    WHEN r.timestamp >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                    WHEN DATE(r.timestamp) >= DATE_SUB(DATE(CONCAT(YEAR(NOW()), '-', LPAD(MONTH(NOW()), 2, '0'), '-01')), INTERVAL 30 DAY)
+                        AND DATE(r.timestamp) < DATE(CONCAT(YEAR(NOW()), '-', LPAD(MONTH(NOW()), 2, '0'), '-01'))
                     THEN DATE_FORMAT(r.timestamp, '%Y-%m-%d %H:%i') END
                 ) AS scans_30d
             FROM readings r
@@ -1772,35 +1774,29 @@ function processActivityData(results, filter) {
         }
     };
     
-    // Group by sensor type
-    const grouped = {};
-    results.forEach(row => {
-        const sensorType = row.sensor_type.toLowerCase();
-        if (!grouped[sensorType]) {
-            grouped[sensorType] = [];
-        }
-        grouped[sensorType].push(row);
-    });
-    
-    // Create labels based on filter
+    // Handle monthly and yearly filters with scan counts
     if (filter === 'monthly') {
         processed.labels = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 
                            'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
         
         // Initialize arrays with zeros
-        processed.datasets.temperature = new Array(12).fill(0);
-        processed.datasets.humidity = new Array(12).fill(0);
-        processed.datasets.gas = new Array(12).fill(0);
+        const scanCounts = new Array(12).fill(0);
         
-        // Fill in actual values
-        Object.keys(grouped).forEach(sensorType => {
-            grouped[sensorType].forEach(row => {
-                const monthIndex = row.month_num - 1;
-                if (monthIndex >= 0 && monthIndex < 12) {
-                    processed.datasets[sensorType][monthIndex] = parseFloat(row.avg_value || row.value);
-                }
-            });
+        // Fill in actual scan counts - ensure integers
+        results.forEach(row => {
+            const monthIndex = row.month_num - 1;
+            if (monthIndex >= 0 && monthIndex < 12) {
+                scanCounts[monthIndex] = Math.round(Number(row.scan_count) || 0);
+            }
         });
+        
+        // For backward compatibility, set all sensor arrays to the same values
+        processed.datasets.temperature = scanCounts;
+        processed.datasets.humidity = scanCounts;
+        processed.datasets.gas = scanCounts;
+        
+        // Also add scanCounts for easier access
+        processed.scanCounts = scanCounts;
         
     } else if (filter === 'yearly') {
         // Get unique years and sort them
@@ -1808,21 +1804,38 @@ function processActivityData(results, filter) {
         processed.labels = years.map(y => y.toString());
         
         // Initialize arrays
-        processed.datasets.temperature = new Array(years.length).fill(0);
-        processed.datasets.humidity = new Array(years.length).fill(0);
-        processed.datasets.gas = new Array(years.length).fill(0);
+        const scanCounts = new Array(years.length).fill(0);
         
-        // Fill in actual values
-        Object.keys(grouped).forEach(sensorType => {
-            grouped[sensorType].forEach(row => {
-                const yearIndex = years.indexOf(row.year_num);
-                if (yearIndex >= 0) {
-                    processed.datasets[sensorType][yearIndex] = parseFloat(row.avg_value || row.value);
-                }
-            });
+        // Fill in actual scan counts - ensure integers
+        results.forEach(row => {
+            const yearIndex = years.indexOf(row.year_num);
+            if (yearIndex >= 0) {
+                scanCounts[yearIndex] = Math.round(Number(row.scan_count) || 0);
+            }
         });
         
+        // For backward compatibility, set all sensor arrays to the same values
+        processed.datasets.temperature = scanCounts;
+        processed.datasets.humidity = scanCounts;
+        processed.datasets.gas = scanCounts;
+        
+        // Also add scanCounts for easier access
+        processed.scanCounts = scanCounts;
+        
     } else {
+        // For time-based filters (real-time, last-hour, etc.), use sensor type grouping
+        // Group by sensor type
+        const grouped = {};
+        results.forEach(row => {
+            const sensorType = row.sensor_type ? row.sensor_type.toLowerCase() : null;
+            if (sensorType) {
+                if (!grouped[sensorType]) {
+                    grouped[sensorType] = [];
+                }
+                grouped[sensorType].push(row);
+            }
+        });
+        
         // For time-based filters, create labels from time buckets
         const timeBuckets = [...new Set(results.map(r => r.time_bucket))].sort();
         processed.labels = timeBuckets;
