@@ -169,51 +169,6 @@ app.get('/api/debug/paths', (req, res) => {
     });
 });
 
-// Contact form API endpoint
-app.post('/api/contact', (req, res) => {
-    try {
-        const { name, email, message } = req.body;
-        
-        // Basic validation
-        if (!name || !email || !message) {
-            return res.status(400).json({
-                success: false,
-                error: 'All fields are required'
-            });
-        }
-        
-        // Email validation
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
-            return res.status(400).json({
-                success: false,
-                error: 'Invalid email address'
-            });
-        }
-        
-        // Log contact form submission (you can extend this to save to database)
-        console.log('Contact form submission:', {
-            name,
-            email,
-            message,
-            timestamp: new Date().toISOString()
-        });
-        
-        // For now, just return success (you can integrate with email service later)
-        res.json({
-            success: true,
-            message: 'Thank you for your message! We\'ll get back to you soon.',
-            timestamp: new Date().toISOString()
-        });
-        
-    } catch (error) {
-        console.error('Contact form error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to process contact form'
-        });
-    }
-});
 
 // Newsletter subscription API endpoint
 app.post('/api/newsletter', (req, res) => {
@@ -319,6 +274,7 @@ const deviceManagementRoutes = require('./routes/device-management');
 const spoilageAnalyticsRoutes = require('./routes/spoilage-analytics');
 const statisticsRoutes = require('./routes/statistics');
 const expiryUpdateRoutes = require('./routes/expery_update');
+const contactRoutes = require('./routes/contact');
 
 // API routes
 // Global activity logger (non-blocking)
@@ -389,6 +345,7 @@ app.use('/api/device-management', deviceManagementRoutes);
 app.use('/api/spoilage-analytics', spoilageAnalyticsRoutes);
 app.use('/api/statistics', statisticsRoutes);
 app.use('/api/expiry-update', expiryUpdateRoutes);
+app.use('/api/contact', contactRoutes);
 
 // Serve frontend routes (dev only). In production, redirect to public frontend domain
 if (isDevelopment) {

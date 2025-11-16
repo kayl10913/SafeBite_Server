@@ -235,6 +235,11 @@ class EmailService {
     async sendContactFormEmail(contactData) {
         try {
             if (!this.transporter) {
+                console.log('📧 [DEV MODE] Contact form email would be sent:');
+                console.log('   Name:', contactData.name);
+                console.log('   Email:', contactData.email);
+                console.log('   Message:', contactData.message);
+                console.log('   To: dinewatchph@gmail.com');
                 return { success: true, message: 'Contact form email logged to console (development mode)' };
             }
 
