@@ -347,7 +347,7 @@ router.put('/:feedbackId', async (req, res) => {
                 response_text = ?,
                 response_date = CASE WHEN ? IS NOT NULL THEN NOW() ELSE response_date END,
                 resolved_by = ?,
-                resolved_at = CASE WHEN ? = 'Resolved' THEN NOW() ELSE NULL END,
+                resolved_at = CASE WHEN CAST(? AS CHAR) COLLATE utf8mb4_unicode_ci = 'Resolved' COLLATE utf8mb4_unicode_ci THEN NOW() ELSE NULL END,
                 updated_at = NOW()
             WHERE feedback_id = ?
         `, [status, response_text, response_text, resolved_by, status, feedbackId]);
