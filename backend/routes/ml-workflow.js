@@ -1188,9 +1188,23 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
 
     } catch (error) {
         console.error('Error generating ML prediction:', error);
+        
+        // Provide more detailed error information
+        const errorMessage = error.message || 'Unknown error occurred';
+        const errorCode = error.code || 'UNKNOWN';
+        
+        // Check if it's a database connection error
+        const isConnectionError = errorCode === 'ECONNRESET' || 
+                                  errorCode === 'PROTOCOL_CONNECTION_LOST' ||
+                                  errorCode === 'ETIMEDOUT';
+        
         res.status(500).json({
             success: false,
-            error: 'Failed to generate ML prediction'
+            error: isConnectionError 
+                ? 'Database connection error. Please try again.' 
+                : `Failed to generate ML prediction: ${errorMessage}`,
+            errorCode: errorCode,
+            details: process.env.NODE_ENV === 'development' ? error.stack : undefined
         });
     }
 });
