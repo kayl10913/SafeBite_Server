@@ -70,17 +70,35 @@ class Auth {
     }
     
     /**
-     * Log user activity
+     * Log user activity (non-blocking - errors are caught and logged but not thrown)
      */
     static async logActivity(userId, action, db) {
         try {
             const query = "INSERT INTO activity_logs (user_id, action) VALUES (?, ?)";
             // Pass NULL for guests to satisfy FK; DB allows NULL for user_id
             const finalUserId = (userId === undefined || userId === null || userId === 0) ? null : userId;
-            await db.query(query, [finalUserId, action]);
+            
+            // Use a timeout to prevent hanging on connection issues
+            const queryPromise = db.query(query, [finalUserId, action]);
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Activity log timeout')), 5000)
+            );
+            
+            await Promise.race([queryPromise, timeoutPromise]);
             console.log(`Activity logged: User ID ${userId}, Action: '${action}'`);
         } catch (error) {
-            console.error(`Activity log error for User ID ${userId}, Action '${action}':`, error);
+            // Log error but don't throw - activity logging should never break the main request
+            const errorCode = error.code || 'UNKNOWN';
+            const errorMessage = error.message || 'Unknown error';
+            
+            // Only log connection errors at warn level, others at error level
+            if (errorCode === 'ECONNRESET' || errorCode === 'PROTOCOL_CONNECTION_LOST' || errorCode === 'ETIMEDOUT') {
+                console.warn(`Activity log connection error (non-critical) for User ID ${userId}, Action '${action}': ${errorCode} - ${errorMessage}`);
+            } else {
+                console.error(`Activity log error for User ID ${userId}, Action '${action}': ${errorCode} - ${errorMessage}`);
+            }
+            
+            // Don't throw - this is a non-critical operation
         }
     }
     

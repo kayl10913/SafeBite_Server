@@ -113,67 +113,6 @@ router.post('/', Auth.authenticateToken, async (req, res) => {
     }
 });
 
-// POST /api/ml-models/train - Track model training session
-router.post('/train', Auth.authenticateToken, async (req, res) => {
-    try {
-        const {
-            model_name,
-            model_version,
-            training_data_count,
-            accuracy_score,
-            precision_score,
-            recall_score,
-            f1_score,
-            performance_metrics
-        } = req.body;
-
-        if (!model_name || !model_version) {
-            return res.status(400).json({
-                success: false,
-                error: 'model_name and model_version are required'
-            });
-        }
-
-        // Update model with training results
-        await db.query(`
-            UPDATE ml_models SET
-                training_data_count = ?,
-                accuracy_score = ?,
-                precision_score = ?,
-                recall_score = ?,
-                f1_score = ?,
-                performance_metrics = ?,
-                last_trained = CURRENT_TIMESTAMP
-            WHERE model_name = ? AND model_version = ?
-        `, [
-            training_data_count, accuracy_score, precision_score, recall_score, f1_score,
-            JSON.stringify(performance_metrics), model_name, model_version
-        ]);
-
-        // Log activity
-        await db.query('INSERT INTO activity_logs (user_id, action) VALUES (?, ?)', 
-            [req.user.user_id, `ML model trained: ${model_name} v${model_version} (accuracy: ${accuracy_score})`]);
-
-        res.json({
-            success: true,
-            message: 'Model training tracked successfully',
-            training_results: {
-                model_name,
-                model_version,
-                accuracy_score,
-                training_data_count
-            }
-        });
-
-    } catch (error) {
-        console.error('Error tracking model training:', error);
-        res.status(500).json({ 
-            success: false, 
-            error: 'Failed to track model training' 
-        });
-    }
-});
-
 // GET /api/ml-models/active - Get active model
 router.get('/active', Auth.authenticateToken, async (req, res) => {
     try {

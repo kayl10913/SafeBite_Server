@@ -53,8 +53,10 @@ router.post('/analyze', Auth.authenticateToken, async (req, res) => {
             JSON.stringify(analysis.recommendations)
         ]);
 
-        // Log the analysis
-        await Auth.logActivity(userId, `AI analysis performed for ${food_name}`, db);
+        // Log the analysis (non-blocking)
+        Auth.logActivity(userId, `AI analysis performed for ${food_name}`, db).catch(err => {
+            console.warn('Failed to log AI analysis activity (non-blocking):', err.message);
+        });
 
         res.status(200).json({
             success: true,
@@ -566,6 +568,50 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
             }
         }
 
+        // Check if response is empty or incomplete
+        if (!text || text.trim().length === 0) {
+            console.warn('⚠️ Gemini API returned empty response. Using gas emission analysis fallback.');
+            console.log('🔍 Full response structure:', JSON.stringify(json, null, 2));
+            
+            // Use gas emission analysis for fallback
+            const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+            const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(gas);
+            
+            const analysis = {
+                riskLevel: gasAnalysis.riskLevel === 'high' ? 'High' : gasAnalysis.riskLevel === 'medium' ? 'Medium' : 'Low',
+                riskScore: gasAnalysis.probability,
+                summary: gasAnalysis.recommendation,
+                keyFactors: ['Gas emission analysis', 'Sensor readings'],
+                recommendations: {
+                    main: gasAnalysis.recommendation,
+                    details: [
+                        'Monitor gas levels closely',
+                        'Check for visible signs of spoilage',
+                        'Verify sensor readings are accurate'
+                    ]
+                },
+                estimatedShelfLifeHours: gasAnalysis.riskLevel === 'high' ? 0 : gasAnalysis.riskLevel === 'medium' ? 12 : 48,
+                notes: 'Analysis based on gas emission thresholds due to empty AI response.',
+                spoilage_status: gasAnalysis.riskLevel === 'high' ? 'unsafe' : gasAnalysis.riskLevel === 'medium' ? 'caution' : 'safe'
+            };
+            
+            // Skip validation and go directly to response
+            // Convert recommendations to structured format if needed
+            if (analysis.recommendations && Array.isArray(analysis.recommendations)) {
+                analysis.recommendations = {
+                    main: analysis.recommendations[0] || 'Follow recommended actions',
+                    details: analysis.recommendations.slice(1) || []
+                };
+            }
+
+            // Log the analysis request for activity tracking (non-blocking)
+            Auth.logActivity(req.user.user_id, `AI analysis performed for ${foodType}`, db).catch(err => {
+                console.warn('Failed to log AI analysis activity (non-blocking):', err.message);
+            });
+
+            return res.json({ analysis });
+        }
+
         // Normalize possible markdown code fences and try to decode as JSON
         let analysis = null;
         let cleaned = (text || '').trim();
@@ -584,21 +630,50 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
             cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
         }
         
-        // Try direct parse first
-        try {
-            analysis = JSON.parse(cleaned);
-        } catch (parseError) {
-            console.log('🔍 JSON Parse Error:', parseError.message);
-            console.log('🔍 Cleaned text:', cleaned.slice(0, 200));
+        // Check if cleaned text is still empty after processing
+        if (!cleaned || cleaned.trim().length === 0) {
+            console.warn('⚠️ Cleaned text is empty after processing. Raw text:', text.slice(0, 200));
+            console.log('🔍 Full response structure:', JSON.stringify(json, null, 2));
             
-            // Fallback: extract first JSON-looking block
-            const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                try {
-                    analysis = JSON.parse(jsonMatch[0]);
-                    console.log('✅ Successfully parsed JSON from fallback extraction');
-                } catch (fallbackError) {
-                    console.error('Failed to parse JSON from Gemini response (fallback):', fallbackError);
+            // Use gas emission analysis for fallback
+            const gasEmissionAnalysis = require('../utils/gasEmissionAnalysis');
+            const gasAnalysis = gasEmissionAnalysis.analyzeGasEmissionThresholds(gas);
+            
+            analysis = {
+                riskLevel: gasAnalysis.riskLevel === 'high' ? 'High' : gasAnalysis.riskLevel === 'medium' ? 'Medium' : 'Low',
+                riskScore: gasAnalysis.probability,
+                summary: gasAnalysis.recommendation,
+                keyFactors: ['Gas emission analysis', 'Sensor readings'],
+                recommendations: {
+                    main: gasAnalysis.recommendation,
+                    details: [
+                        'Monitor gas levels closely',
+                        'Check for visible signs of spoilage',
+                        'Verify sensor readings are accurate'
+                    ]
+                },
+                estimatedShelfLifeHours: gasAnalysis.riskLevel === 'high' ? 0 : gasAnalysis.riskLevel === 'medium' ? 12 : 48,
+                notes: 'Analysis based on gas emission thresholds due to empty AI response.',
+                spoilage_status: gasAnalysis.riskLevel === 'high' ? 'unsafe' : gasAnalysis.riskLevel === 'medium' ? 'caution' : 'safe'
+            };
+        } else {
+            // Try direct parse first
+            try {
+                analysis = JSON.parse(cleaned);
+            } catch (parseError) {
+                console.log('🔍 JSON Parse Error:', parseError.message);
+                console.log('🔍 Cleaned text:', cleaned.slice(0, 200));
+                
+                // Fallback: extract first JSON-looking block
+                const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+                if (jsonMatch && jsonMatch[0]) {
+                    try {
+                        analysis = JSON.parse(jsonMatch[0]);
+                        console.log('✅ Successfully parsed JSON from fallback extraction');
+                    } catch (fallbackError) {
+                        console.error('Failed to parse JSON from Gemini response (fallback):', fallbackError);
+                        console.error('🔍 Failed JSON string:', jsonMatch[0].slice(0, 200));
+                    }
                 }
             }
         }
@@ -691,12 +766,10 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
             };
         }
 
-        // Log the analysis request for activity tracking
-        try {
-            await Auth.logActivity(req.user.user_id, `AI analysis performed for ${foodType}`, db);
-        } catch (logError) {
-            console.warn('Failed to log AI analysis activity:', logError.message);
-        }
+        // Log the analysis request for activity tracking (non-blocking - don't fail request if logging fails)
+        Auth.logActivity(req.user.user_id, `AI analysis performed for ${foodType}`, db).catch(err => {
+            console.warn('Failed to log AI analysis activity (non-blocking):', err.message);
+        });
 
         res.json({ analysis });
 
