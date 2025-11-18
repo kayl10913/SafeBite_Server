@@ -63,20 +63,8 @@ const corsOptions = isDevelopment ? {
         }
     },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: [
-        'Content-Type', 
-        'Authorization', 
-        'X-Requested-With', 
-        'x-scan-id', 
-        'X-Scan-Id',
-        'X-SCAN-ID',
-        'Accept',
-        'Origin'
-    ],
-    exposedHeaders: ['Content-Type', 'Authorization'],
-    preflightContinue: false,
-    optionsSuccessStatus: 204
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-scan-id', 'X-Scan-Id']
 } : {
     origin: [
         'https://safebite-server-zh2r.onrender.com',
@@ -84,26 +72,11 @@ const corsOptions = isDevelopment ? {
         'https://www.safebiteph.com'
     ],
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: [
-        'Content-Type', 
-        'Authorization', 
-        'X-Requested-With', 
-        'x-scan-id', 
-        'X-Scan-Id',
-        'X-SCAN-ID',
-        'Accept',
-        'Origin'
-    ],
-    exposedHeaders: ['Content-Type', 'Authorization'],
-    preflightContinue: false,
-    optionsSuccessStatus: 204
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-scan-id', 'X-Scan-Id']
 };
 
 app.use(cors(corsOptions));
-
-// Explicit OPTIONS handler for CORS preflight (backup)
-app.options('*', cors(corsOptions));
 
 
 // Rate limiting is disabled for development
@@ -196,6 +169,51 @@ app.get('/api/debug/paths', (req, res) => {
     });
 });
 
+// Contact form API endpoint
+app.post('/api/contact', (req, res) => {
+    try {
+        const { name, email, message } = req.body;
+        
+        // Basic validation
+        if (!name || !email || !message) {
+            return res.status(400).json({
+                success: false,
+                error: 'All fields are required'
+            });
+        }
+        
+        // Email validation
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid email address'
+            });
+        }
+        
+        // Log contact form submission (you can extend this to save to database)
+        console.log('Contact form submission:', {
+            name,
+            email,
+            message,
+            timestamp: new Date().toISOString()
+        });
+        
+        // For now, just return success (you can integrate with email service later)
+        res.json({
+            success: true,
+            message: 'Thank you for your message! We\'ll get back to you soon.',
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('Contact form error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to process contact form'
+        });
+    }
+});
 
 // Newsletter subscription API endpoint
 app.post('/api/newsletter', (req, res) => {
@@ -289,9 +307,7 @@ const aiRoutes = require('./routes/ai');
 const sensorAnalyticsRoutes = require('./routes/sensor-analytics');
 const feedbacksRoutes = require('./routes/feedbacks');
 const mlRoutes = require('./routes/ml-prediction');
-const mlTrainingRoutes = require('./routes/ml-training');
 const mlPredictionRoutes = require('./routes/ml-prediction');
-const aiTrainingRoutes = require('./routes/ai-training');
 const aiFoodAnalysisRoutes = require('./routes/ai-food-analysis');
 const mlModelsRoutes = require('./routes/ml-models');
 const mlWorkflowRoutes = require('./routes/ml-workflow');
@@ -301,7 +317,6 @@ const deviceManagementRoutes = require('./routes/device-management');
 const spoilageAnalyticsRoutes = require('./routes/spoilage-analytics');
 const statisticsRoutes = require('./routes/statistics');
 const expiryUpdateRoutes = require('./routes/expery_update');
-const contactRoutes = require('./routes/contact');
 
 // API routes
 // Global activity logger (non-blocking)
@@ -322,7 +337,6 @@ app.use('/api', async (req, res, next) => {
     const isNoiseEndpoint = /^\/api\/activity_logs/i.test(path); // avoid logging attempts to write logs
     const LOG_SKIP_MUTATION_PATTERNS = [
       /^\/api\/admin\/update-profile/i,
-      /^\/api\/ml-training\/add/i,
       /^\/api\/admin\/verify-password/i
     ];
 
@@ -357,13 +371,8 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/sensor-analytics', sensorAnalyticsRoutes);
 app.use('/api/feedbacks', feedbacksRoutes);
-// Register mlTrainingRoutes BEFORE mlRoutes to avoid route conflicts (/:id catches /check)
-// IMPORTANT: Register specific routes first, then catch-all routes
-app.use('/api/ml-training', mlTrainingRoutes); // Register alias first
-app.use('/api/ml', mlTrainingRoutes); // Register mlTrainingRoutes before mlRoutes
 app.use('/api/ml', mlRoutes);
 app.use('/api/ml', mlPredictionRoutes);
-app.use('/api/ai', aiTrainingRoutes);
 app.use('/api/ai', aiFoodAnalysisRoutes);
 app.use('/api/ml-models', mlModelsRoutes);
 app.use('/api/ml-workflow', mlWorkflowRoutes);
@@ -373,7 +382,6 @@ app.use('/api/device-management', deviceManagementRoutes);
 app.use('/api/spoilage-analytics', spoilageAnalyticsRoutes);
 app.use('/api/statistics', statisticsRoutes);
 app.use('/api/expiry-update', expiryUpdateRoutes);
-app.use('/api/contact', contactRoutes);
 
 // Serve frontend routes (dev only). In production, redirect to public frontend domain
 if (isDevelopment) {
