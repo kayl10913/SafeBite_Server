@@ -844,9 +844,20 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
                     ]
                 );
 
-                // Send spoilage email (medium/high only) with throttling
+                // Send spoilage email ONLY for caution and unsafe statuses (Smart Training)
                 try {
-                    if (String(alertLevel).toLowerCase() !== 'low') {
+                    const statusLower = String(finalStatus).toLowerCase();
+                    const shouldSendEmail = statusLower === 'caution' || statusLower === 'unsafe';
+                    
+                    if (shouldSendEmail) {
+                        console.log(`📧 [Smart Training] Preparing to send email for ${finalStatus} status:`, {
+                            user_id,
+                            food_id: food_id || null,
+                            finalStatus,
+                            alertLevel,
+                            probability: finalProbability
+                        });
+                        
                         const canSend = await shouldSendSpoilageEmail(db, {
                             user_id,
                             food_id: food_id || null,
@@ -854,37 +865,56 @@ router.post('/predict', Auth.authenticateToken, async (req, res) => {
                             alert_level: alertLevel
                         });
                         if (!canSend) {
-                            // Throttled: skip email
+                            console.log(`📧 [Smart Training] Email throttled - similar alert sent recently`);
                         } else {
-                        const userRows = await db.query('SELECT first_name, last_name, email FROM users WHERE user_id = ? LIMIT 1', [user_id]);
-                        const user = Array.isArray(userRows) ? userRows[0] : null;
-                        if (user && user.email) {
-                            let foodNameResolved = food_name;
-                            if (!foodNameResolved && food_id) {
-                                const fi = await db.query('SELECT name FROM food_items WHERE food_id = ? LIMIT 1', [food_id]);
-                                if (Array.isArray(fi) && fi.length > 0) foodNameResolved = fi[0].name;
-                            }
-                            await EmailService.sendSpoilageAlertEmail(
-                                user.email,
-                                `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'User',
-                                {
+                            const userRows = await db.query('SELECT first_name, last_name, email FROM users WHERE user_id = ? LIMIT 1', [user_id]);
+                            const user = Array.isArray(userRows) ? userRows[0] : null;
+                            if (user && user.email) {
+                                let foodNameResolved = food_name;
+                                if (!foodNameResolved && food_id) {
+                                    const fi = await db.query('SELECT name FROM food_items WHERE food_id = ? LIMIT 1', [food_id]);
+                                    if (Array.isArray(fi) && fi.length > 0) foodNameResolved = fi[0].name;
+                                }
+                                
+                                console.log(`📧 [Smart Training] Sending email to ${user.email} for ${finalStatus} status:`, {
                                     foodName: foodNameResolved,
                                     alertLevel,
-                                    alertType: 'ml_prediction',
-                                    probability: finalProbability,
-                                    recommendation: recommendedAction,
-                                    message: `ML Prediction: ${foodNameResolved || food_name || 'Food item'} may be ${finalStatus} (${finalProbability}%)`,
-                                    sensorReadings: {
-                                        temperature: finalTemperature,
-                                        humidity: finalHumidity,
-                                        gas_level: finalGasLevel
+                                    probability: finalProbability
+                                });
+                                
+                                const emailResult = await EmailService.sendSpoilageAlertEmail(
+                                    user.email,
+                                    `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'User',
+                                    {
+                                        foodName: foodNameResolved,
+                                        alertLevel,
+                                        alertType: 'ml_prediction',
+                                        probability: finalProbability,
+                                        recommendation: recommendedAction,
+                                        message: `ML Prediction: ${foodNameResolved || food_name || 'Food item'} may be ${finalStatus} (${finalProbability}%)`,
+                                        sensorReadings: {
+                                            temperature: finalTemperature,
+                                            humidity: finalHumidity,
+                                            gas_level: finalGasLevel
+                                        }
                                     }
+                                );
+                                
+                                if (emailResult.success) {
+                                    console.log(`📧 [Smart Training] ✅ Email sent successfully to ${user.email}`);
+                                } else {
+                                    console.error(`📧 [Smart Training] ❌ Email failed:`, emailResult.message || emailResult.error);
                                 }
-                            );
+                            } else {
+                                console.log(`📧 [Smart Training] ⚠️ No email address for user_id ${user_id}`);
+                            }
                         }
-                        }
+                    } else {
+                        console.log(`📧 [Smart Training] Skipping email - status is ${finalStatus} (only sending for caution/unsafe)`);
                     }
-                } catch (_) { }
+                } catch (emailError) {
+                    console.error(`📧 [Smart Training] Error sending email:`, emailError.message);
+                }
             } catch (alertError) {
                 console.warn('Could not create alert:', alertError.message);
             }

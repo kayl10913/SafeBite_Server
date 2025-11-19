@@ -130,14 +130,29 @@ router.post('/', Auth.authenticateToken, async (req, res) => {
         // Log activity
         await db.query('INSERT INTO activity_logs (user_id, action) VALUES (?, ?)', [user_id, `Created ${alert_level} alert: ${message}`]);
 
-        // Attempt to send email notification for medium/high severity (caution and unsafe)
+        // Attempt to send email notification ONLY for caution and unsafe statuses (SmartSense Scanner)
         try {
-            if (String(alert_level).toLowerCase() !== 'low') {
-                console.log(`📧 [Alerts] Preparing to send email for ${alert_level} alert:`, {
+            // Check if alert_data contains spoilage status
+            let spoilageStatus = null;
+            try {
+                const data = typeof alert_data === 'string' ? JSON.parse(alert_data) : (alert_data || {});
+                spoilageStatus = data.condition || data.spoilage_status || null;
+            } catch (_) {}
+            
+            // Determine if we should send email: only for Medium (caution) or High (unsafe) alerts
+            // Also check spoilage status directly if available
+            const alertLevelLower = String(alert_level).toLowerCase();
+            const statusLower = spoilageStatus ? String(spoilageStatus).toLowerCase() : null;
+            const shouldSendEmail = (alertLevelLower === 'medium' || alertLevelLower === 'high') || 
+                                   (statusLower === 'caution' || statusLower === 'unsafe');
+            
+            if (shouldSendEmail) {
+                console.log(`📧 [SmartSense Scanner] Preparing to send email for ${alert_level} alert (status: ${spoilageStatus || 'N/A'}):`, {
                     user_id,
                     food_id: foodIdFinal,
                     alert_type: normalizedType,
-                    alert_level
+                    alert_level,
+                    spoilage_status: spoilageStatus
                 });
                 
                 const canSend = await shouldSendSpoilageEmail(db, {
@@ -147,7 +162,7 @@ router.post('/', Auth.authenticateToken, async (req, res) => {
                     alert_level
                 });
                 if (!canSend) {
-                    console.log(`📧 [Alerts] Email throttled - similar alert sent recently`);
+                    console.log(`📧 [SmartSense Scanner] Email throttled - similar alert sent recently`);
                 } else {
                     const userRows = await db.query('SELECT first_name, last_name, email FROM users WHERE user_id = ? LIMIT 1', [user_id]);
                     const user = Array.isArray(userRows) ? userRows[0] : null;
@@ -164,9 +179,10 @@ router.post('/', Auth.authenticateToken, async (req, res) => {
                             readings = data && data.sensor_readings ? data.sensor_readings : null;
                         } catch (_) {}
 
-                        console.log(`📧 [Alerts] Sending email to ${user.email} for ${alert_level} alert:`, {
+                        console.log(`📧 [SmartSense Scanner] Sending email to ${user.email} for ${alert_level} alert:`, {
                             foodName,
                             alertLevel: alert_level,
+                            spoilageStatus: spoilageStatus,
                             probability: spoilage_probability
                         });
 
@@ -185,19 +201,19 @@ router.post('/', Auth.authenticateToken, async (req, res) => {
                         );
                         
                         if (emailResult.success) {
-                            console.log(`📧 [Alerts] ✅ Email sent successfully to ${user.email}`);
+                            console.log(`📧 [SmartSense Scanner] ✅ Email sent successfully to ${user.email}`);
                         } else {
-                            console.error(`📧 [Alerts] ❌ Email failed:`, emailResult.message || emailResult.error);
+                            console.error(`📧 [SmartSense Scanner] ❌ Email failed:`, emailResult.message || emailResult.error);
                         }
                     } else {
-                        console.log(`📧 [Alerts] ⚠️ No email address for user_id ${user_id}`);
+                        console.log(`📧 [SmartSense Scanner] ⚠️ No email address for user_id ${user_id}`);
                     }
                 }
             } else {
-                console.log(`📧 [Alerts] Skipping email - alert level is Low`);
+                console.log(`📧 [SmartSense Scanner] Skipping email - alert level is ${alert_level} (only sending for caution/unsafe)`);
             }
         } catch (emailError) {
-            console.error(`📧 [Alerts] Error sending email:`, emailError.message);
+            console.error(`📧 [SmartSense Scanner] Error sending email:`, emailError.message);
         }
 
         res.json({ 
@@ -275,14 +291,29 @@ router.post('/scanner', async (req, res) => {
         // Also log activity
         try { await db.query('INSERT INTO activity_logs (user_id, action) VALUES (?, ?)', [uid, `Created ${alert_level} scanner alert: ${message}`]); } catch (_) {}
 
-        // Send email notification for scanner alerts (medium/high - caution and unsafe)
+        // Send email notification ONLY for caution and unsafe statuses (SmartSense Scanner)
         try {
-            if (String(alert_level).toLowerCase() !== 'low') {
-                console.log(`📧 [Scanner Alerts] Preparing to send email for ${alert_level} alert:`, {
+            // Check if alert_data contains spoilage status
+            let spoilageStatus = null;
+            try {
+                const data = typeof alert_data === 'string' ? JSON.parse(alert_data) : (alert_data || {});
+                spoilageStatus = data.condition || data.spoilage_status || null;
+            } catch (_) {}
+            
+            // Determine if we should send email: only for Medium (caution) or High (unsafe) alerts
+            // Also check spoilage status directly if available
+            const alertLevelLower = String(alert_level).toLowerCase();
+            const statusLower = spoilageStatus ? String(spoilageStatus).toLowerCase() : null;
+            const shouldSendEmail = (alertLevelLower === 'medium' || alertLevelLower === 'high') || 
+                                   (statusLower === 'caution' || statusLower === 'unsafe');
+            
+            if (shouldSendEmail) {
+                console.log(`📧 [Scanner Alerts] Preparing to send email for ${alert_level} alert (status: ${spoilageStatus || 'N/A'}):`, {
                     user_id: uid,
                     food_id,
                     alert_type: alert_type,
-                    alert_level
+                    alert_level,
+                    spoilage_status: spoilageStatus
                 });
                 
                 const canSend = await shouldSendSpoilageEmail(db, {
@@ -311,6 +342,7 @@ router.post('/scanner', async (req, res) => {
                         console.log(`📧 [Scanner Alerts] Sending email to ${user.email} for ${alert_level} alert:`, {
                             foodName,
                             alertLevel: alert_level,
+                            spoilageStatus: spoilageStatus,
                             probability: spoilage_probability
                         });
 
@@ -338,7 +370,7 @@ router.post('/scanner', async (req, res) => {
                     }
                 }
             } else {
-                console.log(`📧 [Scanner Alerts] Skipping email - alert level is Low`);
+                console.log(`📧 [Scanner Alerts] Skipping email - alert level is ${alert_level} (only sending for caution/unsafe)`);
             }
         } catch (emailError) {
             console.error(`📧 [Scanner Alerts] Error sending email:`, emailError.message);
