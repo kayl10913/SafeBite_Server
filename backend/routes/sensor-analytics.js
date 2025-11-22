@@ -13,7 +13,7 @@ router.get('/summary', Auth.authenticateToken, async (req, res) => {
                 (SELECT COUNT(DISTINCT u.user_id) FROM users u WHERE u.role = 'User' AND EXISTS (SELECT 1 FROM sensor s WHERE s.user_id = u.user_id)) AS totalSensors,
                 (SELECT COUNT(DISTINCT u.user_id) FROM users u WHERE u.role = 'User' AND EXISTS (SELECT 1 FROM sensor s WHERE s.user_id = u.user_id AND s.is_active = 1)) AS activeTesters,
                 (SELECT COUNT(*) FROM alerts a JOIN sensor s ON a.sensor_id = s.sensor_id JOIN users u ON s.user_id = u.user_id WHERE a.alert_level IN ('Medium', 'High') AND u.role = 'User') AS spoilageAlerts,
-                (SELECT COUNT(DISTINCT u.user_id) FROM users u WHERE u.role = 'User' AND u.user_id NOT IN (SELECT DISTINCT s.user_id FROM sensor s JOIN users u2 ON s.user_id = u2.user_id WHERE u2.role = 'User')) AS inactiveUsers
+                (SELECT COUNT(DISTINCT u.user_id) FROM users u JOIN sensor s ON u.user_id = s.user_id WHERE u.role = 'User' AND u.user_id NOT IN (SELECT DISTINCT s2.user_id FROM sensor s2 WHERE s2.is_active = 1)) AS inactiveUsers
         `;
         
         const summaryResult = await db.query(summaryQuery);

@@ -1757,12 +1757,13 @@ router.get('/sensor-analytics', Auth.authenticateToken, async (req, res) => {
                    JOIN users u ON s.user_id = u.user_id
                   WHERE u.role = 'User') AS \`Spoilage Alerts\`,
 
-                -- Inactive = users with role = User who don't have sensors
-                (SELECT COUNT(*)
+                -- Inactive testers = users with sensors but no active sensors (opposite of Active Testers)
+                (SELECT COUNT(DISTINCT u.user_id)
                    FROM users u
+                   JOIN sensor s ON u.user_id = s.user_id
                   WHERE u.role = 'User'
                     AND u.user_id NOT IN (
-                        SELECT DISTINCT s.user_id FROM sensor s
+                        SELECT DISTINCT s2.user_id FROM sensor s2 WHERE s2.is_active = 1
                     )
                 ) AS \`Inactive\`
         `;
