@@ -107,7 +107,7 @@ router.post('/chat', Auth.authenticateToken, async (req, res) => {
                         'Verify sensor readings are accurate'
                     ]
                 },
-                estimatedShelfLifeHours: gasAnalysis.riskLevel === 'high' ? 0 : gasAnalysis.riskLevel === 'medium' ? 12 : 48,
+                estimatedShelfLifeHours: gasAnalysis.riskLevel === 'high' ? 0 : gasAnalysis.riskLevel === 'medium' ? 3 : 48,
                 notes: 'Gemini disabled – using gas-emission analysis.',
                 spoilage_status: gasAnalysis.riskLevel === 'high' ? 'unsafe' : gasAnalysis.riskLevel === 'medium' ? 'caution' : 'safe'
             };
@@ -590,7 +590,7 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
                         'Verify sensor readings are accurate'
                     ]
                 },
-                estimatedShelfLifeHours: gasAnalysis.riskLevel === 'high' ? 0 : gasAnalysis.riskLevel === 'medium' ? 12 : 48,
+                estimatedShelfLifeHours: gasAnalysis.riskLevel === 'high' ? 0 : gasAnalysis.riskLevel === 'medium' ? 3 : 48,
                 notes: 'Analysis based on gas emission thresholds due to empty AI response.',
                 spoilage_status: gasAnalysis.riskLevel === 'high' ? 'unsafe' : gasAnalysis.riskLevel === 'medium' ? 'caution' : 'safe'
             };
@@ -652,7 +652,7 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
                         'Verify sensor readings are accurate'
                     ]
                 },
-                estimatedShelfLifeHours: gasAnalysis.riskLevel === 'high' ? 0 : gasAnalysis.riskLevel === 'medium' ? 12 : 48,
+                estimatedShelfLifeHours: gasAnalysis.riskLevel === 'high' ? 0 : gasAnalysis.riskLevel === 'medium' ? 3 : 48,
                 notes: 'Analysis based on gas emission thresholds due to empty AI response.',
                 spoilage_status: gasAnalysis.riskLevel === 'high' ? 'unsafe' : gasAnalysis.riskLevel === 'medium' ? 'caution' : 'safe'
             };
@@ -699,7 +699,7 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
                         'Verify sensor readings are accurate'
                     ]
                 },
-                estimatedShelfLifeHours: gasAnalysis.riskLevel === 'high' ? 0 : gasAnalysis.riskLevel === 'medium' ? 12 : 48,
+                estimatedShelfLifeHours: gasAnalysis.riskLevel === 'high' ? 0 : gasAnalysis.riskLevel === 'medium' ? 3 : 48,
                 notes: 'Analysis based on gas emission thresholds due to AI parsing error.',
                 spoilage_status: gasAnalysis.riskLevel === 'high' ? 'unsafe' : gasAnalysis.riskLevel === 'medium' ? 'caution' : 'safe'
             };
@@ -756,6 +756,22 @@ router.post('/ai-analyze', Auth.authenticateToken, async (req, res) => {
             }
         } catch (validationError) {
             console.warn('Failed to validate AI result:', validationError.message);
+        }
+
+        // Validate and adjust estimated shelf life based on status
+        // Caution status should have 3-4 hours shelf life
+        if (analysis && typeof analysis === 'object') {
+            const currentStatus = analysis.spoilage_status || 
+                                (analysis.riskLevel === 'High' ? 'unsafe' : 
+                                 analysis.riskLevel === 'Medium' ? 'caution' : 'safe');
+            
+            if (currentStatus === 'caution' || analysis.riskLevel === 'Medium') {
+                // Ensure caution status has 3-4 hours shelf life
+                if (!analysis.estimatedShelfLifeHours || analysis.estimatedShelfLifeHours > 4) {
+                    analysis.estimatedShelfLifeHours = 3; // Default to 3 hours for caution
+                    console.log('🔍 Adjusted estimated shelf life to 3 hours for caution status');
+                }
+            }
         }
 
         // Convert recommendations to structured format if needed
